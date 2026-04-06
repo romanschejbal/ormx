@@ -21,22 +21,17 @@ use sqlx::SqlitePool;
 use crate::{diff, shadow, snapshot, sql, state};
 
 /// How to determine the "current applied state" for diffing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MigrationStrategy {
     /// Create a temporary database, replay all migrations, introspect.
     /// Accurate even when migration.sql files are manually edited.
     /// Requires a database connection.
+    #[default]
     ShadowDatabase,
 
     /// Use the JSON schema snapshot stored alongside each migration.
     /// Fast and offline, but drifts if migration.sql files are edited.
     Snapshot,
-}
-
-impl Default for MigrationStrategy {
-    fn default() -> Self {
-        Self::ShadowDatabase
-    }
 }
 
 pub struct MigrationRunner {
