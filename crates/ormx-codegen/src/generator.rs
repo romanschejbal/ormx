@@ -25,7 +25,14 @@ pub fn generate(schema: &Schema, output_dir: &Path) -> Result<(), GenerateError>
 
     // Generate per-model modules
     for model in &schema.models {
-        let tokens = generate_model_module(model);
+        let model_tokens = generate_model_module(model);
+        let relation_types = crate::relations::gen_relation_types(model, schema);
+        let relation_include = crate::relations::gen_find_many_include(model, schema);
+        let tokens = quote::quote! {
+            #model_tokens
+            #relation_types
+            #relation_include
+        };
         let code = format_token_stream(tokens);
         let filename = format!("{}.rs", to_snake_case(&model.name));
         write_file(output_dir, &filename, &code)?;

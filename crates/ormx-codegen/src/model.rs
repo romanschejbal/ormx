@@ -871,7 +871,7 @@ fn gen_update_code(model: &Model, scalar_fields: &[&Field], table_name: &str) ->
 
 // ─── Utilities ────────────────────────────────────────────────
 
-fn to_snake_case(s: &str) -> String {
+pub fn to_snake_case(s: &str) -> String {
     let mut result = String::new();
     for (i, c) in s.chars().enumerate() {
         if c.is_uppercase() && i > 0 {
@@ -882,7 +882,7 @@ fn to_snake_case(s: &str) -> String {
     result
 }
 
-fn to_pascal_case(s: &str) -> String {
+pub fn to_pascal_case(s: &str) -> String {
     let mut result = String::new();
     let mut capitalize_next = true;
     for c in s.chars() {

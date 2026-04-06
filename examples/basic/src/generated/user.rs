@@ -636,3 +636,127 @@ fn build_order_by(
         }
     }
 }
+#[derive(Debug, Clone, Default)]
+pub struct UserInclude {
+    pub posts: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserWithRelations {
+    #[serde(flatten)]
+    pub data: User,
+    pub posts: Option<Vec<super::post::Post>>,
+}
+impl User {
+    /// Load relations for a batch of records.
+    pub(crate) async fn load_relations(
+        records: Vec<User>,
+        include: &UserInclude,
+        client: &DatabaseClient,
+    ) -> Result<Vec<UserWithRelations>, OrmxError> {
+        let mut posts_map: std::collections::HashMap<String, Vec<super::post::Post>> = std::collections::HashMap::new();
+        if include.posts {
+            let parent_ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
+            if !parent_ids.is_empty() {
+                let sql = format!(
+                    "SELECT * FROM \"{}\" WHERE \"{}\" IN ({})", "posts", "author_id",
+                    parent_ids.iter().enumerate().map(| (i, _) | format!("${}", i + 1))
+                    .collect:: < Vec < _ >> ().join(", ")
+                );
+                let mut query = sqlx::query_as::<
+                    sqlx::Postgres,
+                    super::post::Post,
+                >(&sql);
+                for id in &parent_ids {
+                    query = query.bind(id);
+                }
+                match client {
+                    DatabaseClient::Postgres(pool) => {
+                        let related_rows = query
+                            .fetch_all(pool)
+                            .await
+                            .map_err(OrmxError::from)?;
+                        for row in related_rows {
+                            posts_map
+                                .entry(row.author_id.clone())
+                                .or_default()
+                                .push(row);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut results = Vec::with_capacity(records.len());
+        for mut r in records {
+            results
+                .push(UserWithRelations {
+                    posts: if include.posts {
+                        Some(posts_map.remove(&r.id).unwrap_or_default())
+                    } else {
+                        None
+                    },
+                    data: r,
+                });
+        }
+        Ok(results)
+    }
+}
+impl<'a> FindManyQuery<'a> {
+    pub fn include(mut self, include: UserInclude) -> FindManyWithIncludeQuery<'a> {
+        FindManyWithIncludeQuery {
+            inner: self,
+            include,
+        }
+    }
+}
+pub struct FindManyWithIncludeQuery<'a> {
+    inner: FindManyQuery<'a>,
+    include: UserInclude,
+}
+impl<'a> FindManyWithIncludeQuery<'a> {
+    pub async fn exec(self) -> Result<Vec<UserWithRelations>, OrmxError> {
+        let include = self.include;
+        let client = self.inner.client;
+        let records = FindManyQuery {
+            client,
+            r#where: self.inner.r#where,
+            order_by: self.inner.order_by,
+            skip: self.inner.skip,
+            take: self.inner.take,
+        }
+            .exec()
+            .await?;
+        User::load_relations(records, &include, client).await
+    }
+}
+impl<'a> FindUniqueQuery<'a> {
+    pub fn include(self, include: UserInclude) -> FindUniqueWithIncludeQuery<'a> {
+        FindUniqueWithIncludeQuery {
+            inner: self,
+            include,
+        }
+    }
+}
+pub struct FindUniqueWithIncludeQuery<'a> {
+    inner: FindUniqueQuery<'a>,
+    include: UserInclude,
+}
+impl<'a> FindUniqueWithIncludeQuery<'a> {
+    pub async fn exec(self) -> Result<Option<UserWithRelations>, OrmxError> {
+        let include = self.include;
+        let client = self.inner.client;
+        let record = FindUniqueQuery {
+            client,
+            r#where: self.inner.r#where,
+        }
+            .exec()
+            .await?;
+        match record {
+            Some(r) => {
+                let mut results = User::load_relations(vec![r], &include, client).await?;
+                Ok(results.pop())
+            }
+            None => Ok(None),
+        }
+    }
+}

@@ -11,63 +11,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to {database_url}...");
     let client = OrmxClient::connect(&database_url).await?;
 
-    // ─── CREATE ────────────────────────────────────────────
+    // ─── CREATE a user ─────────────────────────────────────
     let user = client
         .user()
         .create(generated::user::data::UserCreateInput {
             email: "alice@example.com".into(),
             name: Some("Alice".into()),
             role: Some(generated::Role::Admin),
-            id: None,         // auto-generated uuid
-            created_at: None, // auto-generated now()
+            id: None,
+            created_at: None,
         })
         .exec()
         .await?;
     println!("Created user: {} (id={})", user.email, user.id);
 
-    // ─── FIND UNIQUE ───────────────────────────────────────
-    let found = client
+    // ─── CREATE a post for the user ────────────────────────
+    let post = client
+        .post()
+        .create(generated::post::data::PostCreateInput {
+            title: "Hello World".into(),
+            content: Some("My first post!".into()),
+            author_id: user.id.clone(),
+            published: Some(true),
+            status: Some(generated::PostStatus::Published),
+            id: None,
+            created_at: None,
+        })
+        .exec()
+        .await?;
+    println!("Created post: {} (id={})", post.title, post.id);
+
+    // ─── FIND MANY with include (batched relation loading) ─
+    let users_with_posts = client
+        .user()
+        .find_many(generated::user::filter::UserWhereInput::default())
+        .include(generated::user::UserInclude {
+            posts: true,
+            ..Default::default()
+        })
+        .exec()
+        .await?;
+
+    for u in &users_with_posts {
+        println!(
+            "User: {} has {} posts",
+            u.data.email,
+            u.posts.as_ref().map(|p| p.len()).unwrap_or(0)
+        );
+    }
+
+    // ─── FIND UNIQUE with include ──────────────────────────
+    let user_with_posts = client
         .user()
         .find_unique(generated::user::filter::UserWhereUniqueInput::Email(
             "alice@example.com".into(),
         ))
-        .exec()
-        .await?;
-    println!("Found: {:?}", found.map(|u| u.email));
-
-    // ─── FIND MANY with filters ────────────────────────────
-    let users = client
-        .user()
-        .find_many(generated::user::filter::UserWhereInput {
-            email: Some(StringFilter {
-                contains: Some("@example.com".into()),
-                ..Default::default()
-            }),
+        .include(generated::user::UserInclude {
+            posts: true,
             ..Default::default()
         })
-        .order_by(generated::user::order::UserOrderByInput::CreatedAt(
-            SortOrder::Desc,
-        ))
-        .take(10)
         .exec()
         .await?;
-    println!("Found {} users", users.len());
 
-    // ─── UPDATE ────────────────────────────────────────────
-    let updated = client
-        .user()
-        .update(
-            generated::user::filter::UserWhereUniqueInput::Id(user.id.clone()),
-            generated::user::data::UserUpdateInput {
-                name: Some(SetValue::Set(Some("Alice Smith".into()))),
-                ..Default::default()
-            },
-        )
-        .exec()
-        .await?;
-    println!("Updated: {} -> {:?}", updated.email, updated.name);
+    if let Some(u) = &user_with_posts {
+        println!("Found: {} with {:?} posts", u.data.email, u.posts.as_ref().map(|p| p.len()));
+    }
 
-    // ─── COUNT ─────────────────────────────────────────────
+    // ─── Regular CRUD still works ──────────────────────────
     let count = client
         .user()
         .count(generated::user::filter::UserWhereInput::default())
@@ -75,15 +85,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("Total users: {count}");
 
-    // ─── DELETE ────────────────────────────────────────────
-    let deleted = client
-        .user()
-        .delete(generated::user::filter::UserWhereUniqueInput::Id(
-            user.id.clone(),
-        ))
+    // Cleanup
+    client
+        .post()
+        .delete(generated::post::filter::PostWhereUniqueInput::Id(post.id))
         .exec()
         .await?;
-    println!("Deleted: {}", deleted.email);
+    client
+        .user()
+        .delete(generated::user::filter::UserWhereUniqueInput::Id(user.id))
+        .exec()
+        .await?;
+    println!("Cleaned up.");
 
     client.disconnect().await;
     Ok(())

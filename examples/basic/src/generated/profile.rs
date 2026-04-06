@@ -5,42 +5,33 @@ use serde::{Deserialize, Serialize};
 use ormx_runtime::prelude::*;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[sqlx(rename_all = "snake_case")]
-pub struct Post {
+pub struct Profile {
     pub id: String,
-    pub title: String,
-    pub content: Option<String>,
-    pub published: bool,
-    pub status: super::enums::PostStatus,
-    pub author_id: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub bio: Option<String>,
+    pub avatar: Option<String>,
+    pub user_id: String,
 }
-impl Post {
-    pub const TABLE_NAME: &'static str = "posts";
+impl Profile {
+    pub const TABLE_NAME: &'static str = "profiles";
 }
 pub mod filter {
     use ormx_runtime::prelude::*;
     #[derive(Debug, Clone, Default)]
-    pub struct PostWhereInput {
+    pub struct ProfileWhereInput {
         pub id: Option<ormx_runtime::filter::StringFilter>,
-        pub title: Option<ormx_runtime::filter::StringFilter>,
-        pub content: Option<ormx_runtime::filter::NullableStringFilter>,
-        pub published: Option<ormx_runtime::filter::BoolFilter>,
-        pub status: Option<
-            ormx_runtime::filter::EnumFilter<super::super::enums::PostStatus>,
-        >,
-        pub author_id: Option<ormx_runtime::filter::StringFilter>,
-        pub created_at: Option<ormx_runtime::filter::DateTimeFilter>,
-        pub updated_at: Option<ormx_runtime::filter::DateTimeFilter>,
-        pub and: Option<Vec<PostWhereInput>>,
-        pub or: Option<Vec<PostWhereInput>>,
-        pub not: Option<Box<PostWhereInput>>,
+        pub bio: Option<ormx_runtime::filter::NullableStringFilter>,
+        pub avatar: Option<ormx_runtime::filter::NullableStringFilter>,
+        pub user_id: Option<ormx_runtime::filter::StringFilter>,
+        pub and: Option<Vec<ProfileWhereInput>>,
+        pub or: Option<Vec<ProfileWhereInput>>,
+        pub not: Option<Box<ProfileWhereInput>>,
     }
     #[derive(Debug, Clone)]
-    pub enum PostWhereUniqueInput {
+    pub enum ProfileWhereUniqueInput {
         Id(String),
+        UserId(String),
     }
-    impl PostWhereInput {
+    impl ProfileWhereInput {
         pub(crate) fn build_where<'args, DB: sqlx::Database>(
             &self,
             qb: &mut sqlx::QueryBuilder<'args, DB>,
@@ -49,12 +40,6 @@ pub mod filter {
             i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
             String: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
             Option<String>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
-            bool: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
-            Option<bool>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
-            chrono::DateTime<chrono::Utc>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
-            Option<
-                chrono::DateTime<chrono::Utc>,
-            >: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
         {
             if let Some(filter) = &self.id {
                 if let Some(v) = &filter.equals {
@@ -78,132 +63,70 @@ pub mod filter {
                     qb.push_bind(format!("%{}", v));
                 }
             }
-            if let Some(filter) = &self.title {
+            if let Some(filter) = &self.bio {
                 if let Some(v) = &filter.equals {
-                    qb.push(concat!(" AND \"", "title", "\" = "));
+                    qb.push(concat!(" AND \"", "bio", "\" = "));
                     qb.push_bind(v.clone());
                 }
                 if let Some(v) = &filter.not {
-                    qb.push(concat!(" AND \"", "title", "\" != "));
+                    qb.push(concat!(" AND \"", "bio", "\" != "));
                     qb.push_bind(v.clone());
                 }
                 if let Some(v) = &filter.contains {
-                    qb.push(concat!(" AND \"", "title", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "bio", "\" LIKE "));
                     qb.push_bind(format!("%{}%", v));
                 }
                 if let Some(v) = &filter.starts_with {
-                    qb.push(concat!(" AND \"", "title", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "bio", "\" LIKE "));
                     qb.push_bind(format!("{}%", v));
                 }
                 if let Some(v) = &filter.ends_with {
-                    qb.push(concat!(" AND \"", "title", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "bio", "\" LIKE "));
                     qb.push_bind(format!("%{}", v));
                 }
             }
-            if let Some(filter) = &self.content {
+            if let Some(filter) = &self.avatar {
                 if let Some(v) = &filter.equals {
-                    qb.push(concat!(" AND \"", "content", "\" = "));
+                    qb.push(concat!(" AND \"", "avatar", "\" = "));
                     qb.push_bind(v.clone());
                 }
                 if let Some(v) = &filter.not {
-                    qb.push(concat!(" AND \"", "content", "\" != "));
+                    qb.push(concat!(" AND \"", "avatar", "\" != "));
                     qb.push_bind(v.clone());
                 }
                 if let Some(v) = &filter.contains {
-                    qb.push(concat!(" AND \"", "content", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "avatar", "\" LIKE "));
                     qb.push_bind(format!("%{}%", v));
                 }
                 if let Some(v) = &filter.starts_with {
-                    qb.push(concat!(" AND \"", "content", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "avatar", "\" LIKE "));
                     qb.push_bind(format!("{}%", v));
                 }
                 if let Some(v) = &filter.ends_with {
-                    qb.push(concat!(" AND \"", "content", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "avatar", "\" LIKE "));
                     qb.push_bind(format!("%{}", v));
                 }
             }
-            if let Some(filter) = &self.published {
+            if let Some(filter) = &self.user_id {
                 if let Some(v) = &filter.equals {
-                    qb.push(concat!(" AND \"", "published", "\" = "));
+                    qb.push(concat!(" AND \"", "user_id", "\" = "));
                     qb.push_bind(v.clone());
                 }
                 if let Some(v) = &filter.not {
-                    qb.push(concat!(" AND \"", "published", "\" != "));
-                    qb.push_bind(v.clone());
-                }
-            }
-            if let Some(filter) = &self.author_id {
-                if let Some(v) = &filter.equals {
-                    qb.push(concat!(" AND \"", "author_id", "\" = "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.not {
-                    qb.push(concat!(" AND \"", "author_id", "\" != "));
+                    qb.push(concat!(" AND \"", "user_id", "\" != "));
                     qb.push_bind(v.clone());
                 }
                 if let Some(v) = &filter.contains {
-                    qb.push(concat!(" AND \"", "author_id", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "user_id", "\" LIKE "));
                     qb.push_bind(format!("%{}%", v));
                 }
                 if let Some(v) = &filter.starts_with {
-                    qb.push(concat!(" AND \"", "author_id", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "user_id", "\" LIKE "));
                     qb.push_bind(format!("{}%", v));
                 }
                 if let Some(v) = &filter.ends_with {
-                    qb.push(concat!(" AND \"", "author_id", "\" LIKE "));
+                    qb.push(concat!(" AND \"", "user_id", "\" LIKE "));
                     qb.push_bind(format!("%{}", v));
-                }
-            }
-            if let Some(filter) = &self.created_at {
-                if let Some(v) = &filter.equals {
-                    qb.push(concat!(" AND \"", "created_at", "\" = "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.not {
-                    qb.push(concat!(" AND \"", "created_at", "\" != "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.gt {
-                    qb.push(concat!(" AND \"", "created_at", "\" > "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.gte {
-                    qb.push(concat!(" AND \"", "created_at", "\" >= "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.lt {
-                    qb.push(concat!(" AND \"", "created_at", "\" < "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.lte {
-                    qb.push(concat!(" AND \"", "created_at", "\" <= "));
-                    qb.push_bind(v.clone());
-                }
-            }
-            if let Some(filter) = &self.updated_at {
-                if let Some(v) = &filter.equals {
-                    qb.push(concat!(" AND \"", "updated_at", "\" = "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.not {
-                    qb.push(concat!(" AND \"", "updated_at", "\" != "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.gt {
-                    qb.push(concat!(" AND \"", "updated_at", "\" > "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.gte {
-                    qb.push(concat!(" AND \"", "updated_at", "\" >= "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.lt {
-                    qb.push(concat!(" AND \"", "updated_at", "\" < "));
-                    qb.push_bind(v.clone());
-                }
-                if let Some(v) = &filter.lte {
-                    qb.push(concat!(" AND \"", "updated_at", "\" <= "));
-                    qb.push_bind(v.clone());
                 }
             }
             if let Some(conditions) = &self.and {
@@ -232,7 +155,7 @@ pub mod filter {
             }
         }
     }
-    impl PostWhereUniqueInput {
+    impl ProfileWhereUniqueInput {
         pub(crate) fn build_where<'args, DB: sqlx::Database>(
             &self,
             qb: &mut sqlx::QueryBuilder<'args, DB>,
@@ -241,16 +164,14 @@ pub mod filter {
             i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
             String: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
             Option<String>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
-            bool: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
-            Option<bool>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
-            chrono::DateTime<chrono::Utc>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
-            Option<
-                chrono::DateTime<chrono::Utc>,
-            >: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
         {
             match self {
                 Self::Id(v) => {
                     qb.push(concat!(" AND \"", "id", "\" = "));
+                    qb.push_bind(v.clone());
+                }
+                Self::UserId(v) => {
+                    qb.push(concat!(" AND \"", "user_id", "\" = "));
                     qb.push_bind(v.clone());
                 }
             }
@@ -260,39 +181,29 @@ pub mod filter {
 pub mod data {
     use ormx_runtime::prelude::*;
     #[derive(Debug, Clone)]
-    pub struct PostCreateInput {
-        pub title: String,
-        pub content: Option<String>,
-        pub author_id: String,
+    pub struct ProfileCreateInput {
+        pub bio: Option<String>,
+        pub avatar: Option<String>,
+        pub user_id: String,
         pub id: Option<String>,
-        pub published: Option<bool>,
-        pub status: Option<super::super::enums::PostStatus>,
-        pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     }
     #[derive(Debug, Clone, Default)]
-    pub struct PostUpdateInput {
-        pub title: Option<SetValue<String>>,
-        pub content: Option<SetValue<Option<String>>>,
-        pub published: Option<SetValue<bool>>,
-        pub status: Option<SetValue<super::super::enums::PostStatus>>,
-        pub author_id: Option<SetValue<String>>,
-        pub created_at: Option<SetValue<chrono::DateTime<chrono::Utc>>>,
+    pub struct ProfileUpdateInput {
+        pub bio: Option<SetValue<Option<String>>>,
+        pub avatar: Option<SetValue<Option<String>>>,
+        pub user_id: Option<SetValue<String>>,
     }
 }
 pub mod order {
     use ormx_runtime::prelude::*;
     #[derive(Debug, Clone)]
-    pub enum PostOrderByInput {
+    pub enum ProfileOrderByInput {
         Id(SortOrder),
-        Title(SortOrder),
-        Content(SortOrder),
-        Published(SortOrder),
-        Status(SortOrder),
-        AuthorId(SortOrder),
-        CreatedAt(SortOrder),
-        UpdatedAt(SortOrder),
+        Bio(SortOrder),
+        Avatar(SortOrder),
+        UserId(SortOrder),
     }
-    impl PostOrderByInput {
+    impl ProfileOrderByInput {
         pub(crate) fn build_order_by<'args, DB: sqlx::Database>(
             &self,
             qb: &mut sqlx::QueryBuilder<'args, DB>,
@@ -302,62 +213,46 @@ pub mod order {
                     qb.push(concat!("\"", "id", "\" "));
                     qb.push(order.as_sql());
                 }
-                Self::Title(order) => {
-                    qb.push(concat!("\"", "title", "\" "));
+                Self::Bio(order) => {
+                    qb.push(concat!("\"", "bio", "\" "));
                     qb.push(order.as_sql());
                 }
-                Self::Content(order) => {
-                    qb.push(concat!("\"", "content", "\" "));
+                Self::Avatar(order) => {
+                    qb.push(concat!("\"", "avatar", "\" "));
                     qb.push(order.as_sql());
                 }
-                Self::Published(order) => {
-                    qb.push(concat!("\"", "published", "\" "));
-                    qb.push(order.as_sql());
-                }
-                Self::Status(order) => {
-                    qb.push(concat!("\"", "status", "\" "));
-                    qb.push(order.as_sql());
-                }
-                Self::AuthorId(order) => {
-                    qb.push(concat!("\"", "author_id", "\" "));
-                    qb.push(order.as_sql());
-                }
-                Self::CreatedAt(order) => {
-                    qb.push(concat!("\"", "created_at", "\" "));
-                    qb.push(order.as_sql());
-                }
-                Self::UpdatedAt(order) => {
-                    qb.push(concat!("\"", "updated_at", "\" "));
+                Self::UserId(order) => {
+                    qb.push(concat!("\"", "user_id", "\" "));
                     qb.push(order.as_sql());
                 }
             }
         }
     }
 }
-pub struct PostActions<'a> {
+pub struct ProfileActions<'a> {
     client: &'a DatabaseClient,
 }
-impl<'a> PostActions<'a> {
+impl<'a> ProfileActions<'a> {
     pub fn new(client: &'a DatabaseClient) -> Self {
         Self { client }
     }
     pub fn find_unique(
         &self,
-        r#where: filter::PostWhereUniqueInput,
+        r#where: filter::ProfileWhereUniqueInput,
     ) -> FindUniqueQuery<'a> {
         FindUniqueQuery {
             client: self.client,
             r#where,
         }
     }
-    pub fn find_first(&self, r#where: filter::PostWhereInput) -> FindFirstQuery<'a> {
+    pub fn find_first(&self, r#where: filter::ProfileWhereInput) -> FindFirstQuery<'a> {
         FindFirstQuery {
             client: self.client,
             r#where,
             order_by: vec![],
         }
     }
-    pub fn find_many(&self, r#where: filter::PostWhereInput) -> FindManyQuery<'a> {
+    pub fn find_many(&self, r#where: filter::ProfileWhereInput) -> FindManyQuery<'a> {
         FindManyQuery {
             client: self.client,
             r#where,
@@ -366,7 +261,7 @@ impl<'a> PostActions<'a> {
             take: None,
         }
     }
-    pub fn create(&self, data: data::PostCreateInput) -> CreateQuery<'a> {
+    pub fn create(&self, data: data::ProfileCreateInput) -> CreateQuery<'a> {
         CreateQuery {
             client: self.client,
             data,
@@ -374,8 +269,8 @@ impl<'a> PostActions<'a> {
     }
     pub fn update(
         &self,
-        r#where: filter::PostWhereUniqueInput,
-        data: data::PostUpdateInput,
+        r#where: filter::ProfileWhereUniqueInput,
+        data: data::ProfileUpdateInput,
     ) -> UpdateQuery<'a> {
         UpdateQuery {
             client: self.client,
@@ -383,19 +278,22 @@ impl<'a> PostActions<'a> {
             data,
         }
     }
-    pub fn delete(&self, r#where: filter::PostWhereUniqueInput) -> DeleteQuery<'a> {
+    pub fn delete(&self, r#where: filter::ProfileWhereUniqueInput) -> DeleteQuery<'a> {
         DeleteQuery {
             client: self.client,
             r#where,
         }
     }
-    pub fn count(&self, r#where: filter::PostWhereInput) -> CountQuery<'a> {
+    pub fn count(&self, r#where: filter::ProfileWhereInput) -> CountQuery<'a> {
         CountQuery {
             client: self.client,
             r#where,
         }
     }
-    pub fn create_many(&self, data: Vec<data::PostCreateInput>) -> CreateManyQuery<'a> {
+    pub fn create_many(
+        &self,
+        data: Vec<data::ProfileCreateInput>,
+    ) -> CreateManyQuery<'a> {
         CreateManyQuery {
             client: self.client,
             data,
@@ -403,8 +301,8 @@ impl<'a> PostActions<'a> {
     }
     pub fn update_many(
         &self,
-        r#where: filter::PostWhereInput,
-        data: data::PostUpdateInput,
+        r#where: filter::ProfileWhereInput,
+        data: data::ProfileUpdateInput,
     ) -> UpdateManyQuery<'a> {
         UpdateManyQuery {
             client: self.client,
@@ -412,7 +310,10 @@ impl<'a> PostActions<'a> {
             data,
         }
     }
-    pub fn delete_many(&self, r#where: filter::PostWhereInput) -> DeleteManyQuery<'a> {
+    pub fn delete_many(
+        &self,
+        r#where: filter::ProfileWhereInput,
+    ) -> DeleteManyQuery<'a> {
         DeleteManyQuery {
             client: self.client,
             r#where,
@@ -421,13 +322,13 @@ impl<'a> PostActions<'a> {
 }
 pub struct FindUniqueQuery<'a> {
     client: &'a DatabaseClient,
-    r#where: filter::PostWhereUniqueInput,
+    r#where: filter::ProfileWhereUniqueInput,
 }
 impl<'a> FindUniqueQuery<'a> {
-    pub async fn exec(self) -> Result<Option<Post>, OrmxError> {
+    pub async fn exec(self) -> Result<Option<Profile>, OrmxError> {
         let mut qb = sqlx::QueryBuilder::<
             sqlx::Postgres,
-        >::new("SELECT * FROM \"posts\" WHERE 1=1");
+        >::new("SELECT * FROM \"profiles\" WHERE 1=1");
         self.r#where.build_where(&mut qb);
         qb.push(" LIMIT 1");
         self.client.fetch_optional_pg(qb).await
@@ -435,18 +336,18 @@ impl<'a> FindUniqueQuery<'a> {
 }
 pub struct FindFirstQuery<'a> {
     client: &'a DatabaseClient,
-    r#where: filter::PostWhereInput,
-    order_by: Vec<order::PostOrderByInput>,
+    r#where: filter::ProfileWhereInput,
+    order_by: Vec<order::ProfileOrderByInput>,
 }
 impl<'a> FindFirstQuery<'a> {
-    pub fn order_by(mut self, order: order::PostOrderByInput) -> Self {
+    pub fn order_by(mut self, order: order::ProfileOrderByInput) -> Self {
         self.order_by.push(order);
         self
     }
-    pub async fn exec(self) -> Result<Option<Post>, OrmxError> {
+    pub async fn exec(self) -> Result<Option<Profile>, OrmxError> {
         let mut qb = sqlx::QueryBuilder::<
             sqlx::Postgres,
-        >::new("SELECT * FROM \"posts\" WHERE 1=1");
+        >::new("SELECT * FROM \"profiles\" WHERE 1=1");
         self.r#where.build_where(&mut qb);
         build_order_by(&self.order_by, &mut qb);
         qb.push(" LIMIT 1");
@@ -455,13 +356,13 @@ impl<'a> FindFirstQuery<'a> {
 }
 pub struct FindManyQuery<'a> {
     client: &'a DatabaseClient,
-    r#where: filter::PostWhereInput,
-    order_by: Vec<order::PostOrderByInput>,
+    r#where: filter::ProfileWhereInput,
+    order_by: Vec<order::ProfileOrderByInput>,
     skip: Option<i64>,
     take: Option<i64>,
 }
 impl<'a> FindManyQuery<'a> {
-    pub fn order_by(mut self, order: order::PostOrderByInput) -> Self {
+    pub fn order_by(mut self, order: order::ProfileOrderByInput) -> Self {
         self.order_by.push(order);
         self
     }
@@ -473,10 +374,10 @@ impl<'a> FindManyQuery<'a> {
         self.take = Some(n);
         self
     }
-    pub async fn exec(self) -> Result<Vec<Post>, OrmxError> {
+    pub async fn exec(self) -> Result<Vec<Profile>, OrmxError> {
         let mut qb = sqlx::QueryBuilder::<
             sqlx::Postgres,
-        >::new("SELECT * FROM \"posts\" WHERE 1=1");
+        >::new("SELECT * FROM \"profiles\" WHERE 1=1");
         self.r#where.build_where(&mut qb);
         build_order_by(&self.order_by, &mut qb);
         if let Some(take) = self.take {
@@ -492,21 +393,17 @@ impl<'a> FindManyQuery<'a> {
 }
 pub struct CreateQuery<'a> {
     client: &'a DatabaseClient,
-    data: data::PostCreateInput,
+    data: data::ProfileCreateInput,
 }
 impl<'a> CreateQuery<'a> {
-    pub async fn exec(self) -> Result<Post, OrmxError> {
+    pub async fn exec(self) -> Result<Profile, OrmxError> {
         let client = self.client;
         let mut cols: Vec<&str> = Vec::new();
-        cols.push("title");
-        cols.push("content");
-        cols.push("author_id");
+        cols.push("bio");
+        cols.push("avatar");
+        cols.push("user_id");
         cols.push("id");
-        cols.push("published");
-        cols.push("status");
-        cols.push("created_at");
-        cols.push("updated_at");
-        let mut qb = sqlx::QueryBuilder::new("INSERT INTO \"posts\"");
+        let mut qb = sqlx::QueryBuilder::new("INSERT INTO \"profiles\"");
         qb.push(" (");
         for (i, col) in cols.iter().enumerate() {
             if i > 0 {
@@ -519,21 +416,11 @@ impl<'a> CreateQuery<'a> {
         qb.push(") VALUES (");
         {
             let mut sep = qb.separated(", ");
-            sep.push_bind(self.data.title);
-            sep.push_bind(self.data.content);
-            sep.push_bind(self.data.author_id);
+            sep.push_bind(self.data.bio);
+            sep.push_bind(self.data.avatar);
+            sep.push_bind(self.data.user_id);
             let val = self.data.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             sep.push_bind(val);
-            let val = self.data.published.unwrap_or_else(|| false);
-            sep.push_bind(val);
-            let val = self
-                .data
-                .status
-                .unwrap_or_else(|| super::enums::PostStatus::Draft);
-            sep.push_bind(val);
-            let val = self.data.created_at.unwrap_or_else(|| chrono::Utc::now());
-            sep.push_bind(val);
-            sep.push_bind(chrono::Utc::now());
         }
         qb.push(") RETURNING *");
         client.fetch_one_pg(qb).await
@@ -541,68 +428,38 @@ impl<'a> CreateQuery<'a> {
 }
 pub struct UpdateQuery<'a> {
     client: &'a DatabaseClient,
-    r#where: filter::PostWhereUniqueInput,
-    data: data::PostUpdateInput,
+    r#where: filter::ProfileWhereUniqueInput,
+    data: data::ProfileUpdateInput,
 }
 impl<'a> UpdateQuery<'a> {
-    pub async fn exec(self) -> Result<Post, OrmxError> {
+    pub async fn exec(self) -> Result<Profile, OrmxError> {
         let client = self.client;
-        let mut qb = sqlx::QueryBuilder::new("UPDATE \"posts\" SET ");
+        let mut qb = sqlx::QueryBuilder::new("UPDATE \"profiles\" SET ");
         let mut first_set = true;
-        if let Some(SetValue::Set(v)) = self.data.title {
+        if let Some(SetValue::Set(v)) = self.data.bio {
             if !first_set {
                 qb.push(", ");
             }
             first_set = false;
-            qb.push(concat!("\"", "title", "\" = "));
+            qb.push(concat!("\"", "bio", "\" = "));
             qb.push_bind(v);
         }
-        if let Some(SetValue::Set(v)) = self.data.content {
+        if let Some(SetValue::Set(v)) = self.data.avatar {
             if !first_set {
                 qb.push(", ");
             }
             first_set = false;
-            qb.push(concat!("\"", "content", "\" = "));
+            qb.push(concat!("\"", "avatar", "\" = "));
             qb.push_bind(v);
         }
-        if let Some(SetValue::Set(v)) = self.data.published {
+        if let Some(SetValue::Set(v)) = self.data.user_id {
             if !first_set {
                 qb.push(", ");
             }
             first_set = false;
-            qb.push(concat!("\"", "published", "\" = "));
+            qb.push(concat!("\"", "user_id", "\" = "));
             qb.push_bind(v);
         }
-        if let Some(SetValue::Set(v)) = self.data.status {
-            if !first_set {
-                qb.push(", ");
-            }
-            first_set = false;
-            qb.push(concat!("\"", "status", "\" = "));
-            qb.push_bind(v);
-        }
-        if let Some(SetValue::Set(v)) = self.data.author_id {
-            if !first_set {
-                qb.push(", ");
-            }
-            first_set = false;
-            qb.push(concat!("\"", "author_id", "\" = "));
-            qb.push_bind(v);
-        }
-        if let Some(SetValue::Set(v)) = self.data.created_at {
-            if !first_set {
-                qb.push(", ");
-            }
-            first_set = false;
-            qb.push(concat!("\"", "created_at", "\" = "));
-            qb.push_bind(v);
-        }
-        if !first_set {
-            qb.push(", ");
-        }
-        first_set = false;
-        qb.push(concat!("\"", "updated_at", "\" = "));
-        qb.push_bind(chrono::Utc::now());
         if first_set {
             return Err(OrmxError::Query("No fields to update".into()));
         }
@@ -614,13 +471,13 @@ impl<'a> UpdateQuery<'a> {
 }
 pub struct DeleteQuery<'a> {
     client: &'a DatabaseClient,
-    r#where: filter::PostWhereUniqueInput,
+    r#where: filter::ProfileWhereUniqueInput,
 }
 impl<'a> DeleteQuery<'a> {
-    pub async fn exec(self) -> Result<Post, OrmxError> {
+    pub async fn exec(self) -> Result<Profile, OrmxError> {
         let mut qb = sqlx::QueryBuilder::<
             sqlx::Postgres,
-        >::new("DELETE FROM \"posts\" WHERE 1=1");
+        >::new("DELETE FROM \"profiles\" WHERE 1=1");
         self.r#where.build_where(&mut qb);
         qb.push(" RETURNING *");
         self.client.fetch_one_pg(qb).await
@@ -632,13 +489,13 @@ struct CountResult {
 }
 pub struct CountQuery<'a> {
     client: &'a DatabaseClient,
-    r#where: filter::PostWhereInput,
+    r#where: filter::ProfileWhereInput,
 }
 impl<'a> CountQuery<'a> {
     pub async fn exec(self) -> Result<i64, OrmxError> {
         let mut qb = sqlx::QueryBuilder::<
             sqlx::Postgres,
-        >::new("SELECT COUNT(*) as \"count\" FROM \"posts\" WHERE 1=1");
+        >::new("SELECT COUNT(*) as \"count\" FROM \"profiles\" WHERE 1=1");
         self.r#where.build_where(&mut qb);
         let row: CountResult = self.client.fetch_one_pg(qb).await?;
         Ok(row.count)
@@ -646,7 +503,7 @@ impl<'a> CountQuery<'a> {
 }
 pub struct CreateManyQuery<'a> {
     client: &'a DatabaseClient,
-    data: Vec<data::PostCreateInput>,
+    data: Vec<data::ProfileCreateInput>,
 }
 impl<'a> CreateManyQuery<'a> {
     pub async fn exec(self) -> Result<u64, OrmxError> {
@@ -667,8 +524,8 @@ impl<'a> CreateManyQuery<'a> {
 }
 pub struct UpdateManyQuery<'a> {
     client: &'a DatabaseClient,
-    r#where: filter::PostWhereInput,
-    data: data::PostUpdateInput,
+    r#where: filter::ProfileWhereInput,
+    data: data::ProfileUpdateInput,
 }
 impl<'a> UpdateManyQuery<'a> {
     pub async fn exec(self) -> Result<u64, OrmxError> {
@@ -686,19 +543,19 @@ impl<'a> UpdateManyQuery<'a> {
 }
 pub struct DeleteManyQuery<'a> {
     client: &'a DatabaseClient,
-    r#where: filter::PostWhereInput,
+    r#where: filter::ProfileWhereInput,
 }
 impl<'a> DeleteManyQuery<'a> {
     pub async fn exec(self) -> Result<u64, OrmxError> {
         let mut qb = sqlx::QueryBuilder::<
             sqlx::Postgres,
-        >::new("DELETE FROM \"posts\" WHERE 1=1");
+        >::new("DELETE FROM \"profiles\" WHERE 1=1");
         self.r#where.build_where(&mut qb);
         self.client.execute_pg(qb).await
     }
 }
 fn build_order_by(
-    orders: &[order::PostOrderByInput],
+    orders: &[order::ProfileOrderByInput],
     qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
 ) {
     if !orders.is_empty() {
@@ -712,27 +569,27 @@ fn build_order_by(
     }
 }
 #[derive(Debug, Clone, Default)]
-pub struct PostInclude {
-    pub author: bool,
+pub struct ProfileInclude {
+    pub user: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PostWithRelations {
+pub struct ProfileWithRelations {
     #[serde(flatten)]
-    pub data: Post,
-    pub author: Option<super::user::User>,
+    pub data: Profile,
+    pub user: Option<super::user::User>,
 }
-impl Post {
+impl Profile {
     /// Load relations for a batch of records.
     pub(crate) async fn load_relations(
-        records: Vec<Post>,
-        include: &PostInclude,
+        records: Vec<Profile>,
+        include: &ProfileInclude,
         client: &DatabaseClient,
-    ) -> Result<Vec<PostWithRelations>, OrmxError> {
-        let mut author_map: std::collections::HashMap<String, super::user::User> = std::collections::HashMap::new();
-        if include.author {
+    ) -> Result<Vec<ProfileWithRelations>, OrmxError> {
+        let mut user_map: std::collections::HashMap<String, super::user::User> = std::collections::HashMap::new();
+        if include.user {
             let fk_ids: Vec<String> = records
                 .iter()
-                .map(|r| r.author_id.clone())
+                .map(|r| r.user_id.clone())
                 .collect();
             if !fk_ids.is_empty() {
                 let sql = format!(
@@ -754,7 +611,7 @@ impl Post {
                             .await
                             .map_err(OrmxError::from)?;
                         for row in related_rows {
-                            author_map.insert(row.id.clone(), row);
+                            user_map.insert(row.id.clone(), row);
                         }
                     }
                     _ => {}
@@ -764,9 +621,9 @@ impl Post {
         let mut results = Vec::with_capacity(records.len());
         for mut r in records {
             results
-                .push(PostWithRelations {
-                    author: if include.author {
-                        author_map.remove(&r.author_id).map(Some).unwrap_or(None)
+                .push(ProfileWithRelations {
+                    user: if include.user {
+                        user_map.remove(&r.user_id).map(Some).unwrap_or(None)
                     } else {
                         None
                     },
@@ -777,7 +634,7 @@ impl Post {
     }
 }
 impl<'a> FindManyQuery<'a> {
-    pub fn include(mut self, include: PostInclude) -> FindManyWithIncludeQuery<'a> {
+    pub fn include(mut self, include: ProfileInclude) -> FindManyWithIncludeQuery<'a> {
         FindManyWithIncludeQuery {
             inner: self,
             include,
@@ -786,10 +643,10 @@ impl<'a> FindManyQuery<'a> {
 }
 pub struct FindManyWithIncludeQuery<'a> {
     inner: FindManyQuery<'a>,
-    include: PostInclude,
+    include: ProfileInclude,
 }
 impl<'a> FindManyWithIncludeQuery<'a> {
-    pub async fn exec(self) -> Result<Vec<PostWithRelations>, OrmxError> {
+    pub async fn exec(self) -> Result<Vec<ProfileWithRelations>, OrmxError> {
         let include = self.include;
         let client = self.inner.client;
         let records = FindManyQuery {
@@ -801,11 +658,11 @@ impl<'a> FindManyWithIncludeQuery<'a> {
         }
             .exec()
             .await?;
-        Post::load_relations(records, &include, client).await
+        Profile::load_relations(records, &include, client).await
     }
 }
 impl<'a> FindUniqueQuery<'a> {
-    pub fn include(self, include: PostInclude) -> FindUniqueWithIncludeQuery<'a> {
+    pub fn include(self, include: ProfileInclude) -> FindUniqueWithIncludeQuery<'a> {
         FindUniqueWithIncludeQuery {
             inner: self,
             include,
@@ -814,10 +671,10 @@ impl<'a> FindUniqueQuery<'a> {
 }
 pub struct FindUniqueWithIncludeQuery<'a> {
     inner: FindUniqueQuery<'a>,
-    include: PostInclude,
+    include: ProfileInclude,
 }
 impl<'a> FindUniqueWithIncludeQuery<'a> {
-    pub async fn exec(self) -> Result<Option<PostWithRelations>, OrmxError> {
+    pub async fn exec(self) -> Result<Option<ProfileWithRelations>, OrmxError> {
         let include = self.include;
         let client = self.inner.client;
         let record = FindUniqueQuery {
@@ -828,7 +685,8 @@ impl<'a> FindUniqueWithIncludeQuery<'a> {
             .await?;
         match record {
             Some(r) => {
-                let mut results = Post::load_relations(vec![r], &include, client).await?;
+                let mut results = Profile::load_relations(vec![r], &include, client)
+                    .await?;
                 Ok(results.pop())
             }
             None => Ok(None),

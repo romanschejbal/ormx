@@ -67,7 +67,7 @@ pub struct Field {
 impl Field {
     /// Returns true if this field is a scalar (stored in the database), not a relation.
     pub fn is_scalar(&self) -> bool {
-        self.relation.is_none() && !self.is_list
+        !matches!(self.field_type, FieldKind::Model(_)) && !self.is_list
     }
 
     /// Returns true if this field has a server-side default and can be omitted on create.

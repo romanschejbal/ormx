@@ -24,11 +24,23 @@ model User {
   email     String   @unique
   name      String?
   role      Role     @default(User)
+  posts     Post[]
+  profile   Profile?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([email])
   @@map("users")
+}
+
+model Profile {
+  id     String  @id @default(uuid())
+  bio    String?
+  avatar String?
+  user   User    @relation(fields: [userId], references: [id])
+  userId String  @unique
+
+  @@map("profiles")
 }
 
 model Post {
@@ -37,6 +49,7 @@ model Post {
   content   String?
   published Boolean    @default(false)
   status    PostStatus @default(Draft)
+  author    User       @relation(fields: [authorId], references: [id])
   authorId  String
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt

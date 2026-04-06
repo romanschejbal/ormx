@@ -17,6 +17,9 @@ impl OrmxClient {
     pub fn user(&self) -> super::user::UserActions<'_> {
         super::user::UserActions::new(&self.inner)
     }
+    pub fn profile(&self) -> super::profile::ProfileActions<'_> {
+        super::profile::ProfileActions::new(&self.inner)
+    }
     pub fn post(&self) -> super::post::PostActions<'_> {
         super::post::PostActions::new(&self.inner)
     }

@@ -2,6 +2,7 @@
 
 pub mod enums;
 pub mod user;
+pub mod profile;
 pub mod post;
 pub mod client;
 
