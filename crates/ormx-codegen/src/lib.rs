@@ -14,9 +14,9 @@
 //!
 //! # Related crates
 //!
-//! - [`ormx_core`] -- the `Schema` IR consumed by this crate.
-//! - [`ormx_parser`] -- parses `.ormx` files into the `Schema` IR.
-//! - [`ormx_runtime`] -- the runtime library that generated code depends on.
+//! - `ormx_core` -- the `Schema` IR consumed by this crate.
+//! - `ormx_parser` -- parses `.ormx` files into the `Schema` IR.
+//! - `ormx_runtime` -- the runtime library that generated code depends on.
 
 pub mod client;
 pub mod enums;

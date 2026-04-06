@@ -3,7 +3,7 @@
 //! Each database backend has its own [`SqlRenderer`] implementation that
 //! converts a list of [`MigrationStep`]s into the appropriate DDL statements.
 //! Use [`renderer_for`] to obtain the correct renderer for a given
-//! [`DatabaseProvider`].
+//! `DatabaseProvider`.
 
 pub mod postgres;
 pub mod sqlite;

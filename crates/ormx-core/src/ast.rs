@@ -5,7 +5,7 @@
 //! error reporting and map one-to-one with the grammar rules in `grammar.pest`.
 //!
 //! After parsing, the AST is fed into the validator
-//! ([`crate::schema`] / [`ormx_parser::validator`]) which resolves types,
+//! ([`crate::schema`] / `ormx_parser::validator`) which resolves types,
 //! infers table names, and produces the canonical [`crate::schema::Schema`] IR.
 
 /// A source location span.

@@ -13,9 +13,9 @@
 //!
 //! # Related crates
 //!
-//! - [`ormx_core`] -- domain types (this crate does not depend on `ormx-core`
+//! - `ormx_core` -- domain types (this crate does not depend on `ormx-core`
 //!   at runtime; the generated code bridges the two).
-//! - [`ormx_codegen`] -- generates code that depends on this crate.
+//! - `ormx_codegen` -- generates code that depends on this crate.
 
 pub mod client;
 pub mod error;

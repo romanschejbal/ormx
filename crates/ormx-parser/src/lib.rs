@@ -13,9 +13,9 @@
 //!
 //! # Related crates
 //!
-//! - [`ormx_core`] -- domain types produced by this crate.
-//! - [`ormx_codegen`] -- consumes the `Schema` IR to generate Rust code.
-//! - [`ormx_migrate`] -- consumes the `Schema` IR to produce migrations.
+//! - `ormx_core` -- domain types produced by this crate.
+//! - `ormx_codegen` -- consumes the `Schema` IR to generate Rust code.
+//! - `ormx_migrate` -- consumes the `Schema` IR to produce migrations.
 
 pub mod error;
 pub mod parser;

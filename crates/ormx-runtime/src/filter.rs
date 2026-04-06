@@ -5,7 +5,7 @@
 //! `contains`, `gt`, `lt`, `in`, etc. Enums use the generic [`EnumFilter<E>`].
 //!
 //! Generated `WhereInput` structs compose these filters and implement the
-//! [`WhereClause`] trait to append SQL conditions to a [`SqlBuilder`].
+//! `WhereClause` trait to append SQL conditions to a `SqlBuilder`.
 
 /// Filter operations for String fields.
 #[derive(Debug, Clone, Default)]

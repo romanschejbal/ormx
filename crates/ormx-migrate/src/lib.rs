@@ -20,9 +20,9 @@
 //!
 //! # Related crates
 //!
-//! - [`ormx_core`] -- the `Schema` IR this crate diffs against.
-//! - [`ormx_parser`] -- produces the "current" `Schema` from the `.ormx` file.
-//! - [`ormx_cli`] -- invokes this crate via `ormx migrate` commands.
+//! - `ormx_core` -- the `Schema` IR this crate diffs against.
+//! - `ormx_parser` -- produces the "current" `Schema` from the `.ormx` file.
+//! - `ormx_cli` -- invokes this crate via `ormx migrate` commands.
 
 pub mod diff;
 pub mod introspect;

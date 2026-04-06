@@ -1,6 +1,6 @@
 //! Ordering support for query results.
 //!
-//! Defines [`SortOrder`] (ascending / descending) and the [`OrderByClause`]
+//! Defines [`SortOrder`] (ascending / descending) and the `OrderByClause`
 //! trait that generated per-model `OrderByInput` enums implement. This allows
 //! query builders to chain `.order_by(...)` calls in a type-safe way.
 

@@ -1,7 +1,7 @@
 //! Generates the `client.rs` module containing the `OrmxClient` struct.
 //!
 //! `OrmxClient` is the user-facing entry point. It wraps a
-//! [`ormx_runtime::client::DatabaseClient`] and exposes a method per model
+//! `ormx_runtime::client::DatabaseClient` and exposes a method per model
 //! (e.g., `.user()`, `.post()`) that returns the model's `Actions` struct
 //! for performing CRUD operations.
 
