@@ -14,7 +14,9 @@ ormx-core.workspace = true
 ormx-parser.workspace = true
 ormx-codegen.workspace = true
 ormx-runtime.workspace = true
+ormx-migrate = { workspace = true, features = ["postgres"] }
 clap.workspace = true
+sqlx = { workspace = true, features = ["postgres"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

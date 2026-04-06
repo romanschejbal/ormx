@@ -91,6 +91,7 @@ pub enum FieldAttribute {
 
 /// Default value for a field.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DefaultValue {
     Uuid,
     Cuid,
@@ -102,6 +103,7 @@ pub enum DefaultValue {
 
 /// A literal value in the schema.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LiteralValue {
     String(String),
     Int(i64),
@@ -121,6 +123,7 @@ pub struct RelationAttribute {
 
 /// Referential actions for foreign keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ReferentialAction {
     Cascade,
     Restrict,

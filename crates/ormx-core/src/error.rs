@@ -4,9 +4,7 @@ use core::fmt;
 #[derive(Debug)]
 pub enum CoreError {
     /// A model is missing a primary key (`@id` or `@@id`).
-    MissingPrimaryKey {
-        model_name: String,
-    },
+    MissingPrimaryKey { model_name: String },
 
     /// A field references an unknown type.
     UnknownType {
@@ -23,10 +21,7 @@ pub enum CoreError {
     },
 
     /// Duplicate model or enum name.
-    DuplicateName {
-        name: String,
-        kind: &'static str,
-    },
+    DuplicateName { name: String, kind: &'static str },
 
     /// A `@relation` attribute references unknown fields.
     InvalidRelationFields {
@@ -36,33 +31,53 @@ pub enum CoreError {
     },
 
     /// Unknown database provider.
-    UnknownProvider {
-        provider: String,
-    },
+    UnknownProvider { provider: String },
 
     /// Generic validation error.
-    Validation {
-        message: String,
-    },
+    Validation { message: String },
 }
 
 impl fmt::Display for CoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingPrimaryKey { model_name } => {
-                write!(f, "Model `{model_name}` is missing a primary key (@id or @@id)")
+                write!(
+                    f,
+                    "Model `{model_name}` is missing a primary key (@id or @@id)"
+                )
             }
-            Self::UnknownType { model_name, field_name, type_name } => {
-                write!(f, "Unknown type `{type_name}` in field `{field_name}` of model `{model_name}`")
+            Self::UnknownType {
+                model_name,
+                field_name,
+                type_name,
+            } => {
+                write!(
+                    f,
+                    "Unknown type `{type_name}` in field `{field_name}` of model `{model_name}`"
+                )
             }
-            Self::InvalidDefault { model_name, field_name, message } => {
-                write!(f, "Invalid default for `{model_name}.{field_name}`: {message}")
+            Self::InvalidDefault {
+                model_name,
+                field_name,
+                message,
+            } => {
+                write!(
+                    f,
+                    "Invalid default for `{model_name}.{field_name}`: {message}"
+                )
             }
             Self::DuplicateName { name, kind } => {
                 write!(f, "Duplicate {kind} name: `{name}`")
             }
-            Self::InvalidRelationFields { model_name, field_name, message } => {
-                write!(f, "Invalid @relation on `{model_name}.{field_name}`: {message}")
+            Self::InvalidRelationFields {
+                model_name,
+                field_name,
+                message,
+            } => {
+                write!(
+                    f,
+                    "Invalid @relation on `{model_name}.{field_name}`: {message}"
+                )
             }
             Self::UnknownProvider { provider } => {
                 write!(f, "Unknown database provider: `{provider}`")

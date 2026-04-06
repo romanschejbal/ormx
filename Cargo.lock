@@ -1034,8 +1034,10 @@ dependencies = [
  "miette",
  "ormx-codegen",
  "ormx-core",
+ "ormx-migrate",
  "ormx-parser",
  "ormx-runtime",
+ "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1055,6 +1057,9 @@ dependencies = [
 [[package]]
 name = "ormx-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "ormx-migrate"

@@ -24,6 +24,26 @@ enum Commands {
 
     /// Generate the Rust client from the schema
     Generate,
+
+    /// Migration management
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrateCommands {
+    /// Create a migration, apply it, and regenerate client (development)
+    Dev {
+        /// Migration name
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Apply pending migrations (production)
+    Deploy,
+    /// Show migration status
+    Status,
 }
 
 #[tokio::main]
@@ -37,5 +57,12 @@ async fn main() -> miette::Result<()> {
     match cli.command {
         Commands::Init { provider } => commands::init::run(&provider).await,
         Commands::Generate => commands::generate::run(&cli.schema).await,
+        Commands::Migrate { command } => match command {
+            MigrateCommands::Dev { name } => {
+                commands::migrate::dev(&cli.schema, name.as_deref()).await
+            }
+            MigrateCommands::Deploy => commands::migrate::deploy(&cli.schema).await,
+            MigrateCommands::Status => commands::migrate::status(&cli.schema).await,
+        },
     }
 }

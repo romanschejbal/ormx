@@ -25,9 +25,12 @@ fn validate_datasource(ast: &ast::SchemaFile) -> Result<DatasourceConfig, CoreEr
         message: "Missing datasource block".into(),
     })?;
 
-    let provider = DatabaseProvider::from_str(&ds.provider).ok_or(CoreError::UnknownProvider {
-        provider: ds.provider.clone(),
-    })?;
+    let provider =
+        ds.provider
+            .parse::<DatabaseProvider>()
+            .map_err(|_| CoreError::UnknownProvider {
+                provider: ds.provider.clone(),
+            })?;
 
     let url = match &ds.url {
         ast::StringOrEnv::Literal(s) => s.clone(),
@@ -132,11 +135,10 @@ fn validate_model(
     }
 
     // Check @@id for composite primary key
-    let composite_id: Option<Vec<String>> =
-        model_def.attributes.iter().find_map(|a| match a {
-            ast::BlockAttribute::Id(fields) => Some(fields.clone()),
-            _ => None,
-        });
+    let composite_id: Option<Vec<String>> = model_def.attributes.iter().find_map(|a| match a {
+        ast::BlockAttribute::Id(fields) => Some(fields.clone()),
+        _ => None,
+    });
 
     if !has_id_field && composite_id.is_none() {
         return Err(CoreError::MissingPrimaryKey {
@@ -199,7 +201,7 @@ fn validate_field(
 ) -> Result<Field, CoreError> {
     let type_name = &field_def.field_type.name;
 
-    let field_type = if let Some(scalar) = ScalarType::from_str(type_name) {
+    let field_type = if let Ok(scalar) = type_name.parse::<ScalarType>() {
         FieldKind::Scalar(scalar)
     } else if enum_names.contains(type_name.as_str()) {
         FieldKind::Enum(type_name.clone())

@@ -11,7 +11,7 @@ postgres = ["sqlx/postgres"]
 sqlite = ["sqlx/sqlite"]
 
 [dependencies]
-ormx-core.workspace = true
+ormx-core = { workspace = true, features = ["serde"] }
 ormx-parser.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

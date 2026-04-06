@@ -6,62 +6,87 @@
 use crate::ast::{DefaultValue, ReferentialAction};
 use crate::types::{DatabaseProvider, ScalarType};
 
-/// A fully validated schema.
-#[derive(Debug, Clone)]
-pub struct Schema {
-    pub datasource: DatasourceConfig,
-    pub generators: Vec<GeneratorConfig>,
-    pub enums: Vec<Enum>,
-    pub models: Vec<Model>,
+macro_rules! serde_derive {
+    ($(#[$meta:meta])* $vis:vis struct $name:ident { $($body:tt)* }) => {
+        $(#[$meta])*
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        $vis struct $name { $($body)* }
+    };
+    ($(#[$meta:meta])* $vis:vis enum $name:ident { $($body:tt)* }) => {
+        $(#[$meta])*
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        $vis enum $name { $($body)* }
+    };
 }
 
-/// Resolved datasource configuration.
-#[derive(Debug, Clone)]
-pub struct DatasourceConfig {
-    pub name: String,
-    pub provider: DatabaseProvider,
-    pub url: String,
+serde_derive! {
+    /// A fully validated schema.
+    #[derive(Debug, Clone)]
+    pub struct Schema {
+        pub datasource: DatasourceConfig,
+        pub generators: Vec<GeneratorConfig>,
+        pub enums: Vec<Enum>,
+        pub models: Vec<Model>,
+    }
 }
 
-/// Resolved generator configuration.
-#[derive(Debug, Clone)]
-pub struct GeneratorConfig {
-    pub name: String,
-    pub output: String,
+serde_derive! {
+    /// Resolved datasource configuration.
+    #[derive(Debug, Clone)]
+    pub struct DatasourceConfig {
+        pub name: String,
+        pub provider: DatabaseProvider,
+        pub url: String,
+    }
 }
 
-/// A validated enum definition.
-#[derive(Debug, Clone)]
-pub struct Enum {
-    pub name: String,
-    pub db_name: String,
-    pub variants: Vec<String>,
+serde_derive! {
+    /// Resolved generator configuration.
+    #[derive(Debug, Clone)]
+    pub struct GeneratorConfig {
+        pub name: String,
+        pub output: String,
+    }
 }
 
-/// A validated model definition.
-#[derive(Debug, Clone)]
-pub struct Model {
-    pub name: String,
-    pub db_name: String,
-    pub fields: Vec<Field>,
-    pub primary_key: PrimaryKey,
-    pub indexes: Vec<Index>,
-    pub unique_constraints: Vec<UniqueConstraint>,
+serde_derive! {
+    /// A validated enum definition.
+    #[derive(Debug, Clone)]
+    pub struct Enum {
+        pub name: String,
+        pub db_name: String,
+        pub variants: Vec<String>,
+    }
 }
 
-/// A validated field definition.
-#[derive(Debug, Clone)]
-pub struct Field {
-    pub name: String,
-    pub db_name: String,
-    pub field_type: FieldKind,
-    pub is_optional: bool,
-    pub is_list: bool,
-    pub is_id: bool,
-    pub is_unique: bool,
-    pub is_updated_at: bool,
-    pub default: Option<DefaultValue>,
-    pub relation: Option<ResolvedRelation>,
+serde_derive! {
+    /// A validated model definition.
+    #[derive(Debug, Clone)]
+    pub struct Model {
+        pub name: String,
+        pub db_name: String,
+        pub fields: Vec<Field>,
+        pub primary_key: PrimaryKey,
+        pub indexes: Vec<Index>,
+        pub unique_constraints: Vec<UniqueConstraint>,
+    }
+}
+
+serde_derive! {
+    /// A validated field definition.
+    #[derive(Debug, Clone)]
+    pub struct Field {
+        pub name: String,
+        pub db_name: String,
+        pub field_type: FieldKind,
+        pub is_optional: bool,
+        pub is_list: bool,
+        pub is_id: bool,
+        pub is_unique: bool,
+        pub is_updated_at: bool,
+        pub default: Option<DefaultValue>,
+        pub relation: Option<ResolvedRelation>,
+    }
 }
 
 impl Field {
@@ -76,41 +101,49 @@ impl Field {
     }
 }
 
-/// The kind of a field's type.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FieldKind {
-    /// A scalar type (String, Int, etc.)
-    Scalar(ScalarType),
-    /// A reference to an enum defined in the schema.
-    Enum(String),
-    /// A relation to another model.
-    Model(String),
+serde_derive! {
+    /// The kind of a field's type.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum FieldKind {
+        /// A scalar type (String, Int, etc.)
+        Scalar(ScalarType),
+        /// A reference to an enum defined in the schema.
+        Enum(String),
+        /// A relation to another model.
+        Model(String),
+    }
 }
 
-/// A resolved relation between two models.
-#[derive(Debug, Clone)]
-pub struct ResolvedRelation {
-    pub related_model: String,
-    pub relation_type: RelationType,
-    pub fields: Vec<String>,
-    pub references: Vec<String>,
-    pub on_delete: ReferentialAction,
-    pub on_update: ReferentialAction,
+serde_derive! {
+    /// A resolved relation between two models.
+    #[derive(Debug, Clone)]
+    pub struct ResolvedRelation {
+        pub related_model: String,
+        pub relation_type: RelationType,
+        pub fields: Vec<String>,
+        pub references: Vec<String>,
+        pub on_delete: ReferentialAction,
+        pub on_update: ReferentialAction,
+    }
 }
 
-/// The cardinality of a relation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RelationType {
-    OneToOne,
-    OneToMany,
-    ManyToOne,
-    ManyToMany,
+serde_derive! {
+    /// The cardinality of a relation.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum RelationType {
+        OneToOne,
+        OneToMany,
+        ManyToOne,
+        ManyToMany,
+    }
 }
 
-/// Primary key definition.
-#[derive(Debug, Clone)]
-pub struct PrimaryKey {
-    pub fields: Vec<String>,
+serde_derive! {
+    /// Primary key definition.
+    #[derive(Debug, Clone)]
+    pub struct PrimaryKey {
+        pub fields: Vec<String>,
+    }
 }
 
 impl PrimaryKey {
@@ -119,14 +152,18 @@ impl PrimaryKey {
     }
 }
 
-/// An index definition.
-#[derive(Debug, Clone)]
-pub struct Index {
-    pub fields: Vec<String>,
+serde_derive! {
+    /// An index definition.
+    #[derive(Debug, Clone)]
+    pub struct Index {
+        pub fields: Vec<String>,
+    }
 }
 
-/// A unique constraint.
-#[derive(Debug, Clone)]
-pub struct UniqueConstraint {
-    pub fields: Vec<String>,
+serde_derive! {
+    /// A unique constraint.
+    #[derive(Debug, Clone)]
+    pub struct UniqueConstraint {
+        pub fields: Vec<String>,
+    }
 }

@@ -32,10 +32,7 @@ pub async fn run(schema_path: &str) -> miette::Result<()> {
         .map(|entries| entries.count())
         .unwrap_or(0);
 
-    println!(
-        "Generated {file_count} files in {}",
-        output_dir.display()
-    );
+    println!("Generated {file_count} files in {}", output_dir.display());
 
     Ok(())
 }

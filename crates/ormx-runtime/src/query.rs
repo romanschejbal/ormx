@@ -138,9 +138,6 @@ mod tests {
         b.push(" = ");
         b.push_param();
 
-        assert_eq!(
-            b.build(),
-            r#"SELECT * FROM "users" WHERE "email" = ?"#
-        );
+        assert_eq!(b.build(), r#"SELECT * FROM "users" WHERE "email" = ?"#);
     }
 }

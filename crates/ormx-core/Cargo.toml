@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+serde = ["dep:serde"]
+
 [dependencies]
-# Intentionally empty - ormx-core has ZERO external dependencies.
-# This is a hard architectural constraint (onion architecture).
+serde = { workspace = true, optional = true }

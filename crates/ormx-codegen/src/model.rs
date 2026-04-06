@@ -3,7 +3,7 @@ use ormx_core::types::ScalarType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use crate::rust_type::{filter_type_tokens, rust_type_tokens, ModuleDepth};
+use crate::rust_type::{ModuleDepth, filter_type_tokens, rust_type_tokens};
 
 /// Generate the complete module for a single model.
 pub fn generate_model_module(model: &Model) -> TokenStream {
@@ -176,12 +176,14 @@ fn collect_db_bounds(scalar_fields: &[&Field]) -> Vec<TokenStream> {
         match &f.field_type {
             FieldKind::Scalar(scalar) => {
                 let key = scalar.rust_type();
-                if seen.insert(key) {
-                    if let Some(ty) = scalar_bound_tokens(scalar) {
-                        bounds.push(quote! { #ty: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB> });
-                        // Also add Option<T> bound for nullable field support
-                        bounds.push(quote! { Option<#ty>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB> });
-                    }
+                if seen.insert(key)
+                    && let Some(ty) = scalar_bound_tokens(scalar)
+                {
+                    bounds.push(quote! { #ty: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB> });
+                    // Also add Option<T> bound for nullable field support
+                    bounds.push(
+                        quote! { Option<#ty>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB> },
+                    );
                 }
             }
             FieldKind::Enum(_) => {}
@@ -220,10 +222,7 @@ fn gen_where_arms(scalar_fields: &[&Field]) -> Vec<TokenStream> {
             let is_comparable = matches!(
                 &f.field_type,
                 FieldKind::Scalar(
-                    ScalarType::Int
-                        | ScalarType::BigInt
-                        | ScalarType::Float
-                        | ScalarType::DateTime
+                    ScalarType::Int | ScalarType::BigInt | ScalarType::Float | ScalarType::DateTime
                 )
             );
 
@@ -288,7 +287,7 @@ fn gen_where_arms(scalar_fields: &[&Field]) -> Vec<TokenStream> {
 }
 
 fn gen_unique_where_arms(scalar_fields: &[&Field]) -> Vec<TokenStream> {
-    let where_unique = format_ident!(
+    let _where_unique = format_ident!(
         "{}WhereUniqueInput",
         "" // placeholder, we use Self:: instead
     );
@@ -415,13 +414,13 @@ fn gen_order_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
 // ─── Actions ──────────────────────────────────────────────────
 
 fn gen_actions(model: &Model) -> TokenStream {
-    let model_ident = format_ident!("{}", model.name);
+    let _model_ident = format_ident!("{}", model.name);
     let actions_name = format_ident!("{}Actions", model.name);
     let where_input = format_ident!("{}WhereInput", model.name);
     let where_unique = format_ident!("{}WhereUniqueInput", model.name);
     let create_input = format_ident!("{}CreateInput", model.name);
     let update_input = format_ident!("{}UpdateInput", model.name);
-    let order_by = format_ident!("{}OrderByInput", model.name);
+    let _order_by = format_ident!("{}OrderByInput", model.name);
 
     quote! {
         pub struct #actions_name<'a> {
@@ -487,7 +486,10 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
     let _db_bounds = collect_db_bounds(scalar_fields);
 
     let select_sql = format!(r#"SELECT * FROM "{}" WHERE 1=1"#, table_name);
-    let count_sql = format!(r#"SELECT COUNT(*) as "count" FROM "{}" WHERE 1=1"#, table_name);
+    let count_sql = format!(
+        r#"SELECT COUNT(*) as "count" FROM "{}" WHERE 1=1"#,
+        table_name
+    );
     let delete_sql = format!(r#"DELETE FROM "{}" WHERE 1=1"#, table_name);
 
     let insert_code = gen_insert_code(model, scalar_fields, table_name);
@@ -689,7 +691,7 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
 // ─── INSERT code generation ───────────────────────────────────
 
 fn gen_insert_code(model: &Model, scalar_fields: &[&Field], table_name: &str) -> TokenStream {
-    let model_ident = format_ident!("{}", model.name);
+    let _model_ident = format_ident!("{}", model.name);
 
     // Required columns: scalar, no default, not @updatedAt
     let required: Vec<&Field> = scalar_fields
@@ -804,7 +806,7 @@ fn gen_default_expr(field: &Field) -> TokenStream {
 // ─── UPDATE code generation ───────────────────────────────────
 
 fn gen_update_code(model: &Model, scalar_fields: &[&Field], table_name: &str) -> TokenStream {
-    let model_ident = format_ident!("{}", model.name);
+    let _model_ident = format_ident!("{}", model.name);
 
     // Updatable fields: non-id, non-updatedAt scalar fields
     let updatable: Vec<&Field> = scalar_fields

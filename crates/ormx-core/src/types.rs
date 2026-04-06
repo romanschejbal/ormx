@@ -1,21 +1,29 @@
+use std::fmt;
+use std::str::FromStr;
+
 /// Supported database providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DatabaseProvider {
     PostgreSQL,
     SQLite,
     MySQL,
 }
 
-impl DatabaseProvider {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for DatabaseProvider {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "postgresql" | "postgres" => Some(Self::PostgreSQL),
-            "sqlite" => Some(Self::SQLite),
-            "mysql" => Some(Self::MySQL),
-            _ => None,
+            "postgresql" | "postgres" => Ok(Self::PostgreSQL),
+            "sqlite" => Ok(Self::SQLite),
+            "mysql" => Ok(Self::MySQL),
+            _ => Err(format!("unknown database provider: {s}")),
         }
     }
+}
 
+impl DatabaseProvider {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::PostgreSQL => "postgresql",
@@ -27,6 +35,7 @@ impl DatabaseProvider {
 
 /// Scalar types supported in the schema language.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ScalarType {
     String,
     Int,
@@ -39,22 +48,32 @@ pub enum ScalarType {
     Bytes,
 }
 
-impl ScalarType {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl fmt::Display for ScalarType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl FromStr for ScalarType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "String" => Some(Self::String),
-            "Int" => Some(Self::Int),
-            "BigInt" => Some(Self::BigInt),
-            "Float" => Some(Self::Float),
-            "Decimal" => Some(Self::Decimal),
-            "Boolean" | "Bool" => Some(Self::Boolean),
-            "DateTime" => Some(Self::DateTime),
-            "Json" => Some(Self::Json),
-            "Bytes" => Some(Self::Bytes),
-            _ => None,
+            "String" => Ok(Self::String),
+            "Int" => Ok(Self::Int),
+            "BigInt" => Ok(Self::BigInt),
+            "Float" => Ok(Self::Float),
+            "Decimal" => Ok(Self::Decimal),
+            "Boolean" | "Bool" => Ok(Self::Boolean),
+            "DateTime" => Ok(Self::DateTime),
+            "Json" => Ok(Self::Json),
+            "Bytes" => Ok(Self::Bytes),
+            _ => Err(format!("unknown scalar type: {s}")),
         }
     }
+}
 
+impl ScalarType {
     /// The Rust type this scalar maps to.
     pub fn rust_type(&self) -> &'static str {
         match self {

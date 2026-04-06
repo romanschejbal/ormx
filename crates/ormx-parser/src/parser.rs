@@ -10,8 +10,8 @@ struct OrmxParser;
 
 /// Parse a `.ormx` schema string into an AST.
 pub fn parse(source: &str) -> Result<SchemaFile, ParseError> {
-    let pairs = OrmxParser::parse(Rule::schema, source)
-        .map_err(|e| ParseError::Syntax(e.to_string()))?;
+    let pairs =
+        OrmxParser::parse(Rule::schema, source).map_err(|e| ParseError::Syntax(e.to_string()))?;
 
     let mut schema = SchemaFile {
         datasource: None,
@@ -102,11 +102,8 @@ fn parse_generator(pair: pest::iterators::Pair<'_, Rule>) -> Result<Generator, P
         let key = kv_inner.next().unwrap().as_str();
         let value_pair = kv_inner.next().unwrap();
 
-        match key {
-            "output" => {
-                output = Some(parse_string_value(&value_pair));
-            }
-            _ => {}
+        if key == "output" {
+            output = Some(parse_string_value(&value_pair));
         }
     }
 
@@ -121,7 +118,12 @@ fn parse_enum(pair: pest::iterators::Pair<'_, Rule>) -> Result<EnumDef, ParseErr
     let mut variants = Vec::new();
     for variant_pair in inner {
         if variant_pair.as_rule() == Rule::enum_variant {
-            let variant_name = variant_pair.into_inner().next().unwrap().as_str().to_string();
+            let variant_name = variant_pair
+                .into_inner()
+                .next()
+                .unwrap()
+                .as_str()
+                .to_string();
             variants.push(variant_name);
         }
     }
@@ -158,17 +160,11 @@ fn parse_model(pair: pest::iterators::Pair<'_, Rule>) -> Result<ModelDef, ParseE
                 )));
             }
             Rule::block_attr_map => {
-                let s = member
-                    .into_inner()
-                    .next()
-                    .unwrap()
-                    .as_str();
+                let s = member.into_inner().next().unwrap().as_str();
                 attributes.push(BlockAttribute::Map(unquote(s)));
             }
             Rule::block_attr_id => {
-                attributes.push(BlockAttribute::Id(parse_field_list_from_block_attr(
-                    member,
-                )));
+                attributes.push(BlockAttribute::Id(parse_field_list_from_block_attr(member)));
             }
             _ => {}
         }
@@ -257,9 +253,7 @@ fn parse_field_attribute(
     }
 }
 
-fn parse_default_value(
-    pair: pest::iterators::Pair<'_, Rule>,
-) -> Result<DefaultValue, ParseError> {
+fn parse_default_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<DefaultValue, ParseError> {
     match pair.as_rule() {
         Rule::func_call => {
             let mut inner = pair.into_inner();
@@ -274,18 +268,20 @@ fn parse_default_value(
                 ))),
             }
         }
-        Rule::string_literal => {
-            Ok(DefaultValue::Literal(LiteralValue::String(unquote(pair.as_str()))))
-        }
+        Rule::string_literal => Ok(DefaultValue::Literal(LiteralValue::String(unquote(
+            pair.as_str(),
+        )))),
         Rule::number_literal => {
             let s = pair.as_str();
             if s.contains('.') {
                 Ok(DefaultValue::Literal(LiteralValue::Float(
-                    s.parse().map_err(|e| ParseError::Syntax(format!("Invalid float: {e}")))?,
+                    s.parse()
+                        .map_err(|e| ParseError::Syntax(format!("Invalid float: {e}")))?,
                 )))
             } else {
                 Ok(DefaultValue::Literal(LiteralValue::Int(
-                    s.parse().map_err(|e| ParseError::Syntax(format!("Invalid int: {e}")))?,
+                    s.parse()
+                        .map_err(|e| ParseError::Syntax(format!("Invalid int: {e}")))?,
                 )))
             }
         }
@@ -374,17 +370,15 @@ fn parse_field_list_from_block_attr(pair: pest::iterators::Pair<'_, Rule>) -> Ve
     parse_field_list(&field_list)
 }
 
-fn parse_string_or_env(
-    pair: &pest::iterators::Pair<'_, Rule>,
-) -> Result<StringOrEnv, ParseError> {
+fn parse_string_or_env(pair: &pest::iterators::Pair<'_, Rule>) -> Result<StringOrEnv, ParseError> {
     match pair.as_rule() {
         Rule::func_call => {
             let mut inner = pair.clone().into_inner();
             let func_name = inner.next().unwrap().as_str();
             if func_name == "env" {
-                let arg = inner.next().ok_or_else(|| {
-                    ParseError::Syntax("env() requires a string argument".into())
-                })?;
+                let arg = inner
+                    .next()
+                    .ok_or_else(|| ParseError::Syntax("env() requires a string argument".into()))?;
                 Ok(StringOrEnv::Env(unquote(arg.as_str())))
             } else {
                 Err(ParseError::Syntax(format!(
@@ -469,10 +463,7 @@ model User {
         // Enum
         assert_eq!(schema.enums.len(), 1);
         assert_eq!(schema.enums[0].name, "Role");
-        assert_eq!(
-            schema.enums[0].variants,
-            vec!["User", "Admin", "Moderator"]
-        );
+        assert_eq!(schema.enums[0].variants, vec!["User", "Admin", "Moderator"]);
 
         // Model
         assert_eq!(schema.models.len(), 1);
@@ -485,14 +476,18 @@ model User {
         assert_eq!(id_field.name, "id");
         assert_eq!(id_field.field_type.name, "String");
         assert!(!id_field.field_type.is_optional);
-        assert!(id_field
-            .attributes
-            .iter()
-            .any(|a| matches!(a, FieldAttribute::Id)));
-        assert!(id_field
-            .attributes
-            .iter()
-            .any(|a| matches!(a, FieldAttribute::Default(DefaultValue::Uuid))));
+        assert!(
+            id_field
+                .attributes
+                .iter()
+                .any(|a| matches!(a, FieldAttribute::Id))
+        );
+        assert!(
+            id_field
+                .attributes
+                .iter()
+                .any(|a| matches!(a, FieldAttribute::Default(DefaultValue::Uuid)))
+        );
 
         // name field is optional
         let name_field = &user.fields[2];
@@ -509,21 +504,25 @@ model User {
         // updatedAt has @updatedAt
         let updated_field = &user.fields[5];
         assert_eq!(updated_field.name, "updatedAt");
-        assert!(updated_field
-            .attributes
-            .iter()
-            .any(|a| matches!(a, FieldAttribute::UpdatedAt)));
+        assert!(
+            updated_field
+                .attributes
+                .iter()
+                .any(|a| matches!(a, FieldAttribute::UpdatedAt))
+        );
 
         // Block attributes
         assert_eq!(user.attributes.len(), 2);
-        assert!(user
-            .attributes
-            .iter()
-            .any(|a| matches!(a, BlockAttribute::Index(fields) if fields == &["email"])));
-        assert!(user
-            .attributes
-            .iter()
-            .any(|a| matches!(a, BlockAttribute::Map(name) if name == "users")));
+        assert!(
+            user.attributes
+                .iter()
+                .any(|a| matches!(a, BlockAttribute::Index(fields) if fields == &["email"]))
+        );
+        assert!(
+            user.attributes
+                .iter()
+                .any(|a| matches!(a, BlockAttribute::Map(name) if name == "users"))
+        );
     }
 
     #[test]
@@ -591,10 +590,12 @@ model PostTag {
 
         let schema = parse(schema_str).expect("should parse");
         let model = &schema.models[0];
-        assert!(model
-            .attributes
-            .iter()
-            .any(|a| matches!(a, BlockAttribute::Id(fields) if fields == &["postId", "tagId"])));
+        assert!(
+            model
+                .attributes
+                .iter()
+                .any(|a| matches!(a, BlockAttribute::Id(fields) if fields == &["postId", "tagId"]))
+        );
     }
 
     #[test]

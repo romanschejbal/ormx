@@ -4,7 +4,7 @@ use ormx_core::schema::{Field, FieldKind, Model, RelationType, Schema};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use crate::model::{to_pascal_case, to_snake_case};
+use crate::model::to_snake_case;
 
 /// Information about a relation from one model to another.
 pub struct RelationInfo<'a> {
@@ -69,10 +69,11 @@ pub fn collect_relations<'a>(model: &'a Model, schema: &'a Schema) -> Vec<Relati
 /// E.g., for User.posts (Post[]), find Post.authorId @relation(fields: [authorId], references: [id])
 fn find_back_reference(parent: &Model, child: &Model) -> Option<(String, String)> {
     for field in &child.fields {
-        if let Some(rel) = &field.relation {
-            if rel.related_model == parent.name && !rel.fields.is_empty() {
-                return Some((rel.fields[0].clone(), rel.references[0].clone()));
-            }
+        if let Some(rel) = &field.relation
+            && rel.related_model == parent.name
+            && !rel.fields.is_empty()
+        {
+            return Some((rel.fields[0].clone(), rel.references[0].clone()));
         }
     }
     None
@@ -148,7 +149,7 @@ pub fn gen_relation_types(model: &Model, schema: &Schema) -> TokenStream {
 }
 
 fn gen_load_arms(relations: &[RelationInfo<'_>], model: &Model) -> TokenStream {
-    let model_ident = format_ident!("{}", model.name);
+    let _model_ident = format_ident!("{}", model.name);
     let with_relations_name = format_ident!("{}WithRelations", model.name);
 
     let mut relation_loads = vec![];
@@ -223,7 +224,10 @@ fn gen_load_arms(relations: &[RelationInfo<'_>], model: &Model) -> TokenStream {
                 let fk_field = format_ident!("{}", fk_col_str);
 
                 // Check if this model has the FK field as a scalar
-                let has_fk = model.fields.iter().any(|f| to_snake_case(&f.name) == *fk_col_str && f.is_scalar());
+                let has_fk = model
+                    .fields
+                    .iter()
+                    .any(|f| to_snake_case(&f.name) == *fk_col_str && f.is_scalar());
 
                 if has_fk {
                     relation_loads.push(quote! {

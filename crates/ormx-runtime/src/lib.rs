@@ -6,14 +6,14 @@ pub mod query;
 pub mod transaction;
 
 pub mod prelude {
+    pub use crate::SetValue;
     pub use crate::client::DatabaseClient;
     pub use crate::error::OrmxError;
     pub use crate::filter::*;
     pub use crate::order::{OrderByClause, SortOrder};
     pub use crate::query::SqlBuilder;
-    pub use crate::SetValue;
-    pub use sqlx;
     pub use chrono;
+    pub use sqlx;
     pub use uuid;
 }
 
