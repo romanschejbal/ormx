@@ -3,7 +3,6 @@ use crate::error::OrmxError;
 /// The database client, wrapping an sqlx connection pool.
 ///
 /// Supports PostgreSQL and SQLite via feature flags.
-/// When both features are enabled, it can connect to either.
 #[derive(Debug, Clone)]
 pub enum DatabaseClient {
     #[cfg(feature = "postgres")]
@@ -45,26 +44,6 @@ impl DatabaseClient {
         ))
     }
 
-    /// Returns true if this client is connected to PostgreSQL.
-    #[allow(unreachable_patterns)]
-    pub fn is_postgres(&self) -> bool {
-        match self {
-            #[cfg(feature = "postgres")]
-            Self::Postgres(_) => true,
-            _ => false,
-        }
-    }
-
-    /// Returns true if this client is connected to SQLite.
-    #[allow(unreachable_patterns)]
-    pub fn is_sqlite(&self) -> bool {
-        match self {
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(_) => true,
-            _ => false,
-        }
-    }
-
     /// Close the connection pool.
     pub async fn disconnect(self) {
         match self {
@@ -72,6 +51,122 @@ impl DatabaseClient {
             Self::Postgres(pool) => pool.close().await,
             #[cfg(feature = "sqlite")]
             Self::Sqlite(pool) => pool.close().await,
+        }
+    }
+
+    /// Execute a query builder against the appropriate pool, returning all rows.
+    #[cfg(feature = "postgres")]
+    pub async fn fetch_all_pg<'q, T>(
+        &self,
+        mut qb: sqlx::QueryBuilder<'q, sqlx::Postgres>,
+    ) -> Result<Vec<T>, OrmxError>
+    where
+        T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    {
+        match self {
+            Self::Postgres(pool) => Ok(qb.build_query_as::<T>().fetch_all(pool).await?),
+            #[cfg(feature = "sqlite")]
+            _ => Err(OrmxError::Query("Expected PostgreSQL connection".into())),
+        }
+    }
+
+    #[cfg(feature = "postgres")]
+    pub async fn fetch_optional_pg<'q, T>(
+        &self,
+        mut qb: sqlx::QueryBuilder<'q, sqlx::Postgres>,
+    ) -> Result<Option<T>, OrmxError>
+    where
+        T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    {
+        match self {
+            Self::Postgres(pool) => Ok(qb.build_query_as::<T>().fetch_optional(pool).await?),
+            #[cfg(feature = "sqlite")]
+            _ => Err(OrmxError::Query("Expected PostgreSQL connection".into())),
+        }
+    }
+
+    #[cfg(feature = "postgres")]
+    pub async fn fetch_one_pg<'q, T>(
+        &self,
+        mut qb: sqlx::QueryBuilder<'q, sqlx::Postgres>,
+    ) -> Result<T, OrmxError>
+    where
+        T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    {
+        match self {
+            Self::Postgres(pool) => Ok(qb.build_query_as::<T>().fetch_one(pool).await?),
+            #[cfg(feature = "sqlite")]
+            _ => Err(OrmxError::Query("Expected PostgreSQL connection".into())),
+        }
+    }
+
+    #[cfg(feature = "postgres")]
+    pub async fn execute_pg<'q>(
+        &self,
+        mut qb: sqlx::QueryBuilder<'q, sqlx::Postgres>,
+    ) -> Result<u64, OrmxError> {
+        match self {
+            Self::Postgres(pool) => Ok(qb.build().execute(pool).await?.rows_affected()),
+            #[cfg(feature = "sqlite")]
+            _ => Err(OrmxError::Query("Expected PostgreSQL connection".into())),
+        }
+    }
+
+    // SQLite variants
+    #[cfg(feature = "sqlite")]
+    pub async fn fetch_all_sqlite<'q, T>(
+        &self,
+        mut qb: sqlx::QueryBuilder<'q, sqlx::Sqlite>,
+    ) -> Result<Vec<T>, OrmxError>
+    where
+        T: for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> + Send + Unpin,
+    {
+        match self {
+            Self::Sqlite(pool) => Ok(qb.build_query_as::<T>().fetch_all(pool).await?),
+            #[cfg(feature = "postgres")]
+            _ => Err(OrmxError::Query("Expected SQLite connection".into())),
+        }
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub async fn fetch_optional_sqlite<'q, T>(
+        &self,
+        mut qb: sqlx::QueryBuilder<'q, sqlx::Sqlite>,
+    ) -> Result<Option<T>, OrmxError>
+    where
+        T: for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> + Send + Unpin,
+    {
+        match self {
+            Self::Sqlite(pool) => Ok(qb.build_query_as::<T>().fetch_optional(pool).await?),
+            #[cfg(feature = "postgres")]
+            _ => Err(OrmxError::Query("Expected SQLite connection".into())),
+        }
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub async fn fetch_one_sqlite<'q, T>(
+        &self,
+        mut qb: sqlx::QueryBuilder<'q, sqlx::Sqlite>,
+    ) -> Result<T, OrmxError>
+    where
+        T: for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> + Send + Unpin,
+    {
+        match self {
+            Self::Sqlite(pool) => Ok(qb.build_query_as::<T>().fetch_one(pool).await?),
+            #[cfg(feature = "postgres")]
+            _ => Err(OrmxError::Query("Expected SQLite connection".into())),
+        }
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub async fn execute_sqlite<'q>(
+        &self,
+        mut qb: sqlx::QueryBuilder<'q, sqlx::Sqlite>,
+    ) -> Result<u64, OrmxError> {
+        match self {
+            Self::Sqlite(pool) => Ok(qb.build().execute(pool).await?.rows_affected()),
+            #[cfg(feature = "postgres")]
+            _ => Err(OrmxError::Query("Expected SQLite connection".into())),
         }
     }
 }

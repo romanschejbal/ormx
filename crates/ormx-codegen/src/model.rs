@@ -1,4 +1,5 @@
 use ormx_core::schema::{Field, FieldKind, Model};
+use ormx_core::types::ScalarType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -8,15 +9,15 @@ use crate::rust_type::{filter_type_tokens, rust_type_tokens, ModuleDepth};
 pub fn generate_model_module(model: &Model) -> TokenStream {
     let scalar_fields: Vec<&Field> = model.fields.iter().filter(|f| f.is_scalar()).collect();
 
-    let data_struct = generate_data_struct(model, &scalar_fields);
-    let filter_module = generate_filter_module(model, &scalar_fields);
-    let data_module = generate_data_module(model, &scalar_fields);
-    let order_module = generate_order_module(model, &scalar_fields);
-    let actions_struct = generate_actions_struct(model);
-    let query_builders = generate_query_builders(model);
+    let data_struct = gen_data_struct(model, &scalar_fields);
+    let filter_module = gen_filter_module(model, &scalar_fields);
+    let data_module = gen_data_module(model, &scalar_fields);
+    let order_module = gen_order_module(model, &scalar_fields);
+    let actions_struct = gen_actions(model);
+    let query_builders = gen_query_builders(model, &scalar_fields);
 
     quote! {
-        #![allow(unused_imports, dead_code, clippy::all)]
+        #![allow(unused_imports, dead_code, clippy::all, unused_variables)]
 
         use serde::{Deserialize, Serialize};
         use ormx_runtime::prelude::*;
@@ -30,8 +31,9 @@ pub fn generate_model_module(model: &Model) -> TokenStream {
     }
 }
 
-/// Generate the main data struct with sqlx::FromRow.
-fn generate_data_struct(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
+// ─── Data Struct ──────────────────────────────────────────────
+
+fn gen_data_struct(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
     let struct_name = format_ident!("{}", model.name);
     let table_name = &model.db_name;
 
@@ -41,7 +43,6 @@ fn generate_data_struct(model: &Model, scalar_fields: &[&Field]) -> TokenStream 
             let name = format_ident!("{}", to_snake_case(&f.name));
             let ty = rust_type_tokens(f, ModuleDepth::TopLevel);
             let db_name = &f.db_name;
-
             if db_name != &to_snake_case(&f.name) {
                 quote! { #[sqlx(rename = #db_name)] pub #name: #ty }
             } else {
@@ -63,13 +64,12 @@ fn generate_data_struct(model: &Model, scalar_fields: &[&Field]) -> TokenStream 
     }
 }
 
-/// Generate the filter module with WhereInput and WhereUniqueInput.
-fn generate_filter_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
-    let model_name = &model.name;
-    let where_input_name = format_ident!("{}WhereInput", model_name);
-    let where_unique_name = format_ident!("{}WhereUniqueInput", model_name);
+// ─── Filter Module ────────────────────────────────────────────
 
-    // WhereInput fields (using Nested depth since we're inside a submodule)
+fn gen_filter_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
+    let where_input = format_ident!("{}WhereInput", model.name);
+    let where_unique = format_ident!("{}WhereUniqueInput", model.name);
+
     let where_fields: Vec<TokenStream> = scalar_fields
         .iter()
         .filter_map(|f| {
@@ -79,100 +79,83 @@ fn generate_filter_module(model: &Model, scalar_fields: &[&Field]) -> TokenStrea
         })
         .collect();
 
-    // WhereUniqueInput variants (PascalCase)
     let unique_variants: Vec<TokenStream> = scalar_fields
         .iter()
         .filter(|f| f.is_id || f.is_unique)
         .map(|f| {
-            let variant_name = format_ident!("{}", to_pascal_case(&f.name));
+            let variant = format_ident!("{}", to_pascal_case(&f.name));
             let ty = rust_type_tokens(f, ModuleDepth::Nested);
-            quote! { #variant_name(#ty) }
+            quote! { #variant(#ty) }
         })
         .collect();
 
-    // WhereClause implementation
-    let where_clause_arms: Vec<TokenStream> = scalar_fields
-        .iter()
-        .filter(|f| filter_type_tokens(f, ModuleDepth::Nested).is_some())
-        .map(|f| {
-            let field_name = format_ident!("{}", to_snake_case(&f.name));
-            let db_name = &f.db_name;
-            generate_filter_apply(f, &field_name, db_name)
-        })
-        .collect();
-
-    // UniqueWhereClause implementation
-    let unique_clause_arms: Vec<TokenStream> = scalar_fields
-        .iter()
-        .filter(|f| f.is_id || f.is_unique)
-        .map(|f| {
-            let variant_name = format_ident!("{}", to_pascal_case(&f.name));
-            let db_name = &f.db_name;
-            quote! {
-                #where_unique_name::#variant_name(_) => {
-                    builder.push(" AND ");
-                    builder.push_identifier(#db_name);
-                    builder.push(" = ");
-                    builder.push_param();
-                }
-            }
-        })
-        .collect();
+    // Generate build_where for WhereInput
+    let db_bounds = collect_db_bounds(scalar_fields);
+    let where_arms = gen_where_arms(scalar_fields);
+    let unique_arms = gen_unique_where_arms(scalar_fields);
 
     quote! {
         pub mod filter {
             use ormx_runtime::prelude::*;
 
             #[derive(Debug, Clone, Default)]
-            pub struct #where_input_name {
+            pub struct #where_input {
                 #(#where_fields,)*
-                pub and: Option<Vec<#where_input_name>>,
-                pub or: Option<Vec<#where_input_name>>,
-                pub not: Option<Box<#where_input_name>>,
+                pub and: Option<Vec<#where_input>>,
+                pub or: Option<Vec<#where_input>>,
+                pub not: Option<Box<#where_input>>,
             }
 
             #[derive(Debug, Clone)]
-            pub enum #where_unique_name {
+            pub enum #where_unique {
                 #(#unique_variants),*
             }
 
-            impl WhereClause for #where_input_name {
-                fn apply_to(&self, builder: &mut SqlBuilder) {
-                    #(#where_clause_arms)*
+            impl #where_input {
+                pub(crate) fn build_where<'args, DB: sqlx::Database>(
+                    &self,
+                    qb: &mut sqlx::QueryBuilder<'args, DB>,
+                )
+                where
+                    #(#db_bounds,)*
+                {
+                    #(#where_arms)*
 
-                    if let Some(and_conditions) = &self.and {
-                        for condition in and_conditions {
-                            condition.apply_to(builder);
+                    if let Some(conditions) = &self.and {
+                        for c in conditions {
+                            c.build_where(qb);
                         }
                     }
-
-                    if let Some(or_conditions) = &self.or {
-                        if !or_conditions.is_empty() {
-                            builder.push(" AND (");
-                            for (i, condition) in or_conditions.iter().enumerate() {
-                                if i > 0 {
-                                    builder.push(" OR ");
-                                }
-                                builder.push("(1=1");
-                                condition.apply_to(builder);
-                                builder.push(")");
+                    if let Some(conditions) = &self.or {
+                        if !conditions.is_empty() {
+                            qb.push(" AND (");
+                            for (i, c) in conditions.iter().enumerate() {
+                                if i > 0 { qb.push(" OR "); }
+                                qb.push("(1=1");
+                                c.build_where(qb);
+                                qb.push(")");
                             }
-                            builder.push(")");
+                            qb.push(")");
                         }
                     }
-
-                    if let Some(not_condition) = &self.not {
-                        builder.push(" AND NOT (1=1");
-                        not_condition.apply_to(builder);
-                        builder.push(")");
+                    if let Some(c) = &self.not {
+                        qb.push(" AND NOT (1=1");
+                        c.build_where(qb);
+                        qb.push(")");
                     }
                 }
             }
 
-            impl UniqueWhereClause for #where_unique_name {
-                fn apply_to(&self, builder: &mut SqlBuilder) {
+            impl #where_unique {
+                pub(crate) fn build_where<'args, DB: sqlx::Database>(
+                    &self,
+                    qb: &mut sqlx::QueryBuilder<'args, DB>,
+                )
+                where
+                    #(#db_bounds,)*
+                {
                     match self {
-                        #(#unique_clause_arms)*
+                        #(#unique_arms)*
                     }
                 }
             }
@@ -180,114 +163,158 @@ fn generate_filter_module(model: &Model, scalar_fields: &[&Field]) -> TokenStrea
     }
 }
 
-/// Generate filter application code for a single field.
-fn generate_filter_apply(
-    field: &Field,
-    field_ident: &proc_macro2::Ident,
-    db_name: &str,
-) -> TokenStream {
-    let is_string = matches!(
-        &field.field_type,
-        FieldKind::Scalar(s) if matches!(s, ormx_core::types::ScalarType::String)
-    );
-    let is_comparable = matches!(
-        &field.field_type,
-        FieldKind::Scalar(s) if matches!(
-            s,
-            ormx_core::types::ScalarType::Int
-                | ormx_core::types::ScalarType::BigInt
-                | ormx_core::types::ScalarType::Float
-                | ormx_core::types::ScalarType::DateTime
-        )
-    );
+/// Collect the sqlx type bounds needed for all scalar types used by the model.
+fn collect_db_bounds(scalar_fields: &[&Field]) -> Vec<TokenStream> {
+    let mut seen = std::collections::HashSet::new();
+    let mut bounds = Vec::new();
 
-    let mut arms = vec![];
+    // Always need i64 for LIMIT/OFFSET
+    seen.insert("i64");
+    bounds.push(quote! { i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB> });
 
-    arms.push(quote! {
-        if filter.equals.is_some() {
-            builder.push(" AND ");
-            builder.push_identifier(#db_name);
-            builder.push(" = ");
-            builder.push_param();
+    for f in scalar_fields {
+        match &f.field_type {
+            FieldKind::Scalar(scalar) => {
+                let key = scalar.rust_type();
+                if seen.insert(key) {
+                    if let Some(ty) = scalar_bound_tokens(scalar) {
+                        bounds.push(quote! { #ty: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB> });
+                        // Also add Option<T> bound for nullable field support
+                        bounds.push(quote! { Option<#ty>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB> });
+                    }
+                }
+            }
+            FieldKind::Enum(_) => {}
+            _ => {}
         }
-    });
-
-    arms.push(quote! {
-        if filter.not.is_some() {
-            builder.push(" AND ");
-            builder.push_identifier(#db_name);
-            builder.push(" != ");
-            builder.push_param();
-        }
-    });
-
-    if is_string {
-        arms.push(quote! {
-            if filter.contains.is_some() {
-                builder.push(" AND ");
-                builder.push_identifier(#db_name);
-                builder.push(" LIKE ");
-                builder.push_param();
-            }
-            if filter.starts_with.is_some() {
-                builder.push(" AND ");
-                builder.push_identifier(#db_name);
-                builder.push(" LIKE ");
-                builder.push_param();
-            }
-            if filter.ends_with.is_some() {
-                builder.push(" AND ");
-                builder.push_identifier(#db_name);
-                builder.push(" LIKE ");
-                builder.push_param();
-            }
-        });
     }
 
-    if is_comparable {
-        arms.push(quote! {
-            if filter.gt.is_some() {
-                builder.push(" AND ");
-                builder.push_identifier(#db_name);
-                builder.push(" > ");
-                builder.push_param();
-            }
-            if filter.gte.is_some() {
-                builder.push(" AND ");
-                builder.push_identifier(#db_name);
-                builder.push(" >= ");
-                builder.push_param();
-            }
-            if filter.lt.is_some() {
-                builder.push(" AND ");
-                builder.push_identifier(#db_name);
-                builder.push(" < ");
-                builder.push_param();
-            }
-            if filter.lte.is_some() {
-                builder.push(" AND ");
-                builder.push_identifier(#db_name);
-                builder.push(" <= ");
-                builder.push_param();
-            }
-        });
-    }
+    bounds
+}
 
-    quote! {
-        if let Some(filter) = &self.#field_ident {
-            #(#arms)*
-        }
+fn scalar_bound_tokens(scalar: &ScalarType) -> Option<TokenStream> {
+    match scalar {
+        ScalarType::String => Some(quote! { String }),
+        ScalarType::Int => Some(quote! { i32 }),
+        ScalarType::BigInt => Some(quote! { i64 }),
+        ScalarType::Float => Some(quote! { f64 }),
+        ScalarType::Boolean => Some(quote! { bool }),
+        ScalarType::DateTime => Some(quote! { chrono::DateTime<chrono::Utc> }),
+        ScalarType::Bytes => Some(quote! { Vec<u8> }),
+        ScalarType::Json | ScalarType::Decimal => None,
     }
 }
 
-/// Generate the data module with CreateInput and UpdateInput.
-fn generate_data_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
-    let model_name = &model.name;
-    let create_name = format_ident!("{}CreateInput", model_name);
-    let update_name = format_ident!("{}UpdateInput", model_name);
+/// Generate where-clause arms for each filterable scalar field.
+fn gen_where_arms(scalar_fields: &[&Field]) -> Vec<TokenStream> {
+    scalar_fields
+        .iter()
+        .filter_map(|f| {
+            // Only generate filter arms for scalar types (skip enums for now)
+            if !matches!(&f.field_type, FieldKind::Scalar(_)) {
+                return None;
+            }
+            let field_ident = format_ident!("{}", to_snake_case(&f.name));
+            let db_name = &f.db_name;
+            let is_string = matches!(&f.field_type, FieldKind::Scalar(ScalarType::String));
+            let is_comparable = matches!(
+                &f.field_type,
+                FieldKind::Scalar(
+                    ScalarType::Int
+                        | ScalarType::BigInt
+                        | ScalarType::Float
+                        | ScalarType::DateTime
+                )
+            );
 
-    // Required fields: scalar fields that DON'T have a default and are NOT @updatedAt
-    let required_create_fields: Vec<TokenStream> = scalar_fields
+            let mut arms = vec![];
+
+            arms.push(quote! {
+                if let Some(v) = &filter.equals {
+                    qb.push(concat!(" AND \"", #db_name, "\" = "));
+                    qb.push_bind(v.clone());
+                }
+                if let Some(v) = &filter.not {
+                    qb.push(concat!(" AND \"", #db_name, "\" != "));
+                    qb.push_bind(v.clone());
+                }
+            });
+
+            if is_string {
+                arms.push(quote! {
+                    if let Some(v) = &filter.contains {
+                        qb.push(concat!(" AND \"", #db_name, "\" LIKE "));
+                        qb.push_bind(format!("%{}%", v));
+                    }
+                    if let Some(v) = &filter.starts_with {
+                        qb.push(concat!(" AND \"", #db_name, "\" LIKE "));
+                        qb.push_bind(format!("{}%", v));
+                    }
+                    if let Some(v) = &filter.ends_with {
+                        qb.push(concat!(" AND \"", #db_name, "\" LIKE "));
+                        qb.push_bind(format!("%{}", v));
+                    }
+                });
+            }
+
+            if is_comparable {
+                arms.push(quote! {
+                    if let Some(v) = &filter.gt {
+                        qb.push(concat!(" AND \"", #db_name, "\" > "));
+                        qb.push_bind(v.clone());
+                    }
+                    if let Some(v) = &filter.gte {
+                        qb.push(concat!(" AND \"", #db_name, "\" >= "));
+                        qb.push_bind(v.clone());
+                    }
+                    if let Some(v) = &filter.lt {
+                        qb.push(concat!(" AND \"", #db_name, "\" < "));
+                        qb.push_bind(v.clone());
+                    }
+                    if let Some(v) = &filter.lte {
+                        qb.push(concat!(" AND \"", #db_name, "\" <= "));
+                        qb.push_bind(v.clone());
+                    }
+                });
+            }
+
+            Some(quote! {
+                if let Some(filter) = &self.#field_ident {
+                    #(#arms)*
+                }
+            })
+        })
+        .collect()
+}
+
+fn gen_unique_where_arms(scalar_fields: &[&Field]) -> Vec<TokenStream> {
+    let where_unique = format_ident!(
+        "{}WhereUniqueInput",
+        "" // placeholder, we use Self:: instead
+    );
+    scalar_fields
+        .iter()
+        .filter(|f| f.is_id || f.is_unique)
+        .map(|f| {
+            let variant = format_ident!("{}", to_pascal_case(&f.name));
+            let db_name = &f.db_name;
+            quote! {
+                Self::#variant(v) => {
+                    qb.push(concat!(" AND \"", #db_name, "\" = "));
+                    qb.push_bind(v.clone());
+                }
+            }
+        })
+        .collect()
+}
+
+// ─── Data Module ──────────────────────────────────────────────
+
+fn gen_data_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
+    let create_name = format_ident!("{}CreateInput", model.name);
+    let update_name = format_ident!("{}UpdateInput", model.name);
+
+    let required_fields: Vec<TokenStream> = scalar_fields
         .iter()
         .filter(|f| !f.has_default() && !f.is_updated_at)
         .map(|f| {
@@ -297,20 +324,16 @@ fn generate_data_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream 
         })
         .collect();
 
-    // Optional fields: scalar fields that HAVE a default (user can override)
-    // Exclude @updatedAt since it's always auto-set
-    let optional_create_fields: Vec<TokenStream> = scalar_fields
+    let optional_fields: Vec<TokenStream> = scalar_fields
         .iter()
         .filter(|f| f.has_default() && !f.is_updated_at)
         .map(|f| {
             let name = format_ident!("{}", to_snake_case(&f.name));
             let base_ty = rust_type_tokens(f, ModuleDepth::Nested);
-            // Wrap in Option so the user can optionally override the default
             quote! { pub #name: Option<#base_ty> }
         })
         .collect();
 
-    // Update input: all non-id, non-updatedAt fields wrapped in Option<SetValue<T>>
     let update_fields: Vec<TokenStream> = scalar_fields
         .iter()
         .filter(|f| !f.is_id && !f.is_updated_at)
@@ -327,8 +350,8 @@ fn generate_data_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream 
 
             #[derive(Debug, Clone)]
             pub struct #create_name {
-                #(#required_create_fields,)*
-                #(#optional_create_fields,)*
+                #(#required_fields,)*
+                #(#optional_fields,)*
             }
 
             #[derive(Debug, Clone, Default)]
@@ -339,10 +362,10 @@ fn generate_data_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream 
     }
 }
 
-/// Generate the order module with OrderByInput.
-fn generate_order_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
-    let model_name = &model.name;
-    let order_name = format_ident!("{}OrderByInput", model_name);
+// ─── Order Module ─────────────────────────────────────────────
+
+fn gen_order_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
+    let order_name = format_ident!("{}OrderByInput", model.name);
 
     let variants: Vec<TokenStream> = scalar_fields
         .iter()
@@ -358,10 +381,9 @@ fn generate_order_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream
             let variant = format_ident!("{}", to_pascal_case(&f.name));
             let db_name = &f.db_name;
             quote! {
-                #order_name::#variant(order) => {
-                    builder.push_identifier(#db_name);
-                    builder.push(" ");
-                    builder.push(order.as_sql());
+                Self::#variant(order) => {
+                    qb.push(concat!("\"", #db_name, "\" "));
+                    qb.push(order.as_sql());
                 }
             }
         })
@@ -376,8 +398,11 @@ fn generate_order_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream
                 #(#variants),*
             }
 
-            impl OrderByClause for #order_name {
-                fn apply_to(&self, builder: &mut SqlBuilder) {
+            impl #order_name {
+                pub(crate) fn build_order_by<'args, DB: sqlx::Database>(
+                    &self,
+                    qb: &mut sqlx::QueryBuilder<'args, DB>,
+                ) {
                     match self {
                         #(#order_arms)*
                     }
@@ -387,9 +412,10 @@ fn generate_order_module(model: &Model, scalar_fields: &[&Field]) -> TokenStream
     }
 }
 
-/// Generate the Actions struct with CRUD methods.
-fn generate_actions_struct(model: &Model) -> TokenStream {
-    let model_name = format_ident!("{}", model.name);
+// ─── Actions ──────────────────────────────────────────────────
+
+fn gen_actions(model: &Model) -> TokenStream {
+    let model_ident = format_ident!("{}", model.name);
     let actions_name = format_ident!("{}Actions", model.name);
     let where_input = format_ident!("{}WhereInput", model.name);
     let where_unique = format_ident!("{}WhereUniqueInput", model.name);
@@ -403,260 +429,447 @@ fn generate_actions_struct(model: &Model) -> TokenStream {
         }
 
         impl<'a> #actions_name<'a> {
-            pub fn new(client: &'a DatabaseClient) -> Self {
-                Self { client }
+            pub fn new(client: &'a DatabaseClient) -> Self { Self { client } }
+
+            pub fn find_unique(&self, r#where: filter::#where_unique) -> FindUniqueQuery<'a> {
+                FindUniqueQuery { client: self.client, r#where }
             }
 
-            pub fn find_unique(
-                &self,
-                r#where: filter::#where_unique,
-            ) -> FindUniqueQuery<'a, #model_name, filter::#where_unique> {
-                FindUniqueQuery::new(self.client, r#where)
+            pub fn find_first(&self, r#where: filter::#where_input) -> FindFirstQuery<'a> {
+                FindFirstQuery { client: self.client, r#where, order_by: vec![] }
             }
 
-            pub fn find_first(
-                &self,
-                r#where: filter::#where_input,
-            ) -> FindFirstQuery<'a, #model_name, filter::#where_input, order::#order_by> {
-                FindFirstQuery::new(self.client, r#where)
+            pub fn find_many(&self, r#where: filter::#where_input) -> FindManyQuery<'a> {
+                FindManyQuery { client: self.client, r#where, order_by: vec![], skip: None, take: None }
             }
 
-            pub fn find_many(
-                &self,
-                r#where: filter::#where_input,
-            ) -> FindManyQuery<'a, #model_name, filter::#where_input, order::#order_by> {
-                FindManyQuery::new(self.client, r#where)
+            pub fn create(&self, data: data::#create_input) -> CreateQuery<'a> {
+                CreateQuery { client: self.client, data }
             }
 
-            pub fn create(
-                &self,
-                data: data::#create_input,
-            ) -> CreateQuery<'a, #model_name, data::#create_input> {
-                CreateQuery::new(self.client, data)
+            pub fn update(&self, r#where: filter::#where_unique, data: data::#update_input) -> UpdateQuery<'a> {
+                UpdateQuery { client: self.client, r#where, data }
             }
 
-            pub fn update(
-                &self,
-                r#where: filter::#where_unique,
-                data: data::#update_input,
-            ) -> UpdateQuery<'a, #model_name, filter::#where_unique, data::#update_input> {
-                UpdateQuery::new(self.client, r#where, data)
+            pub fn delete(&self, r#where: filter::#where_unique) -> DeleteQuery<'a> {
+                DeleteQuery { client: self.client, r#where }
             }
 
-            pub fn delete(
-                &self,
-                r#where: filter::#where_unique,
-            ) -> DeleteQuery<'a, #model_name, filter::#where_unique> {
-                DeleteQuery::new(self.client, r#where)
+            pub fn count(&self, r#where: filter::#where_input) -> CountQuery<'a> {
+                CountQuery { client: self.client, r#where }
             }
 
-            pub fn upsert(
-                &self,
-                r#where: filter::#where_unique,
-                create: data::#create_input,
-                update: data::#update_input,
-            ) -> UpsertQuery<'a, #model_name, filter::#where_unique, data::#create_input, data::#update_input> {
-                UpsertQuery::new(self.client, r#where, create, update)
+            pub fn create_many(&self, data: Vec<data::#create_input>) -> CreateManyQuery<'a> {
+                CreateManyQuery { client: self.client, data }
             }
 
-            pub fn create_many(
-                &self,
-                data: Vec<data::#create_input>,
-            ) -> CreateManyQuery<'a, data::#create_input> {
-                CreateManyQuery::new(self.client, data)
+            pub fn update_many(&self, r#where: filter::#where_input, data: data::#update_input) -> UpdateManyQuery<'a> {
+                UpdateManyQuery { client: self.client, r#where, data }
             }
 
-            pub fn update_many(
-                &self,
-                r#where: filter::#where_input,
-                data: data::#update_input,
-            ) -> UpdateManyQuery<'a, filter::#where_input, data::#update_input> {
-                UpdateManyQuery::new(self.client, r#where, data)
-            }
-
-            pub fn delete_many(
-                &self,
-                r#where: filter::#where_input,
-            ) -> DeleteManyQuery<'a, filter::#where_input> {
-                DeleteManyQuery::new(self.client, r#where)
-            }
-
-            pub fn count(
-                &self,
-                r#where: filter::#where_input,
-            ) -> CountQuery<'a, filter::#where_input> {
-                CountQuery::new(self.client, r#where)
+            pub fn delete_many(&self, r#where: filter::#where_input) -> DeleteManyQuery<'a> {
+                DeleteManyQuery { client: self.client, r#where }
             }
         }
     }
 }
 
-/// Generate the fluent query builder structs.
-fn generate_query_builders(model: &Model) -> TokenStream {
-    let _model_name = format_ident!("{}", model.name);
+// ─── Query Builders with exec() ──────────────────────────────
+
+fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
+    let model_ident = format_ident!("{}", model.name);
+    let table_name = &model.db_name;
+    let _where_input = format_ident!("{}WhereInput", model.name);
+    let _where_unique = format_ident!("{}WhereUniqueInput", model.name);
+    let _create_input = format_ident!("{}CreateInput", model.name);
+    let _update_input = format_ident!("{}UpdateInput", model.name);
+    let order_by = format_ident!("{}OrderByInput", model.name);
+    let _db_bounds = collect_db_bounds(scalar_fields);
+
+    let select_sql = format!(r#"SELECT * FROM "{}" WHERE 1=1"#, table_name);
+    let count_sql = format!(r#"SELECT COUNT(*) as "count" FROM "{}" WHERE 1=1"#, table_name);
+    let delete_sql = format!(r#"DELETE FROM "{}" WHERE 1=1"#, table_name);
+
+    let insert_code = gen_insert_code(model, scalar_fields, table_name);
+    let update_code = gen_update_code(model, scalar_fields, table_name);
 
     quote! {
-        pub struct FindUniqueQuery<'a, T, W> {
+        pub struct FindUniqueQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
-            _marker: std::marker::PhantomData<T>,
+            r#where: filter::#_where_unique,
         }
 
-        impl<'a, T, W: UniqueWhereClause> FindUniqueQuery<'a, T, W> {
-            pub fn new(client: &'a DatabaseClient, r#where: W) -> Self {
-                Self { client, r#where, _marker: std::marker::PhantomData }
+        impl<'a> FindUniqueQuery<'a> {
+            pub async fn exec(self) -> Result<Option<#model_ident>, OrmxError> {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#select_sql);
+                self.r#where.build_where(&mut qb);
+                qb.push(" LIMIT 1");
+                self.client.fetch_optional_pg(qb).await
             }
         }
 
-        pub struct FindFirstQuery<'a, T, W, O> {
+        pub struct FindFirstQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
-            order_by: Vec<O>,
-            _marker: std::marker::PhantomData<T>,
+            r#where: filter::#_where_input,
+            order_by: Vec<order::#order_by>,
         }
 
-        impl<'a, T, W: WhereClause, O: OrderByClause> FindFirstQuery<'a, T, W, O> {
-            pub fn new(client: &'a DatabaseClient, r#where: W) -> Self {
-                Self { client, r#where, order_by: vec![], _marker: std::marker::PhantomData }
-            }
-
-            pub fn order_by(mut self, order: O) -> Self {
+        impl<'a> FindFirstQuery<'a> {
+            pub fn order_by(mut self, order: order::#order_by) -> Self {
                 self.order_by.push(order);
                 self
             }
+
+            pub async fn exec(self) -> Result<Option<#model_ident>, OrmxError> {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#select_sql);
+                self.r#where.build_where(&mut qb);
+                build_order_by(&self.order_by, &mut qb);
+                qb.push(" LIMIT 1");
+                self.client.fetch_optional_pg(qb).await
+            }
         }
 
-        pub struct FindManyQuery<'a, T, W, O> {
+        pub struct FindManyQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
-            order_by: Vec<O>,
+            r#where: filter::#_where_input,
+            order_by: Vec<order::#order_by>,
             skip: Option<i64>,
             take: Option<i64>,
-            _marker: std::marker::PhantomData<T>,
         }
 
-        impl<'a, T, W: WhereClause, O: OrderByClause> FindManyQuery<'a, T, W, O> {
-            pub fn new(client: &'a DatabaseClient, r#where: W) -> Self {
-                Self {
-                    client, r#where, order_by: vec![],
-                    skip: None, take: None,
-                    _marker: std::marker::PhantomData,
-                }
-            }
-
-            pub fn order_by(mut self, order: O) -> Self {
+        impl<'a> FindManyQuery<'a> {
+            pub fn order_by(mut self, order: order::#order_by) -> Self {
                 self.order_by.push(order);
                 self
             }
 
-            pub fn skip(mut self, skip: i64) -> Self {
-                self.skip = Some(skip);
+            pub fn skip(mut self, n: i64) -> Self {
+                self.skip = Some(n);
                 self
             }
 
-            pub fn take(mut self, take: i64) -> Self {
-                self.take = Some(take);
+            pub fn take(mut self, n: i64) -> Self {
+                self.take = Some(n);
                 self
             }
-        }
 
-        pub struct CreateQuery<'a, T, D> {
-            client: &'a DatabaseClient,
-            data: D,
-            _marker: std::marker::PhantomData<T>,
-        }
-
-        impl<'a, T, D> CreateQuery<'a, T, D> {
-            pub fn new(client: &'a DatabaseClient, data: D) -> Self {
-                Self { client, data, _marker: std::marker::PhantomData }
+            pub async fn exec(self) -> Result<Vec<#model_ident>, OrmxError> {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#select_sql);
+                self.r#where.build_where(&mut qb);
+                build_order_by(&self.order_by, &mut qb);
+                if let Some(take) = self.take {
+                    qb.push(" LIMIT ");
+                    qb.push_bind(take);
+                }
+                if let Some(skip) = self.skip {
+                    qb.push(" OFFSET ");
+                    qb.push_bind(skip);
+                }
+                self.client.fetch_all_pg(qb).await
             }
         }
 
-        pub struct UpdateQuery<'a, T, W, D> {
+        pub struct CreateQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
-            data: D,
-            _marker: std::marker::PhantomData<T>,
+            data: data::#_create_input,
         }
 
-        impl<'a, T, W, D> UpdateQuery<'a, T, W, D> {
-            pub fn new(client: &'a DatabaseClient, r#where: W, data: D) -> Self {
-                Self { client, r#where, data, _marker: std::marker::PhantomData }
+        impl<'a> CreateQuery<'a> {
+            pub async fn exec(self) -> Result<#model_ident, OrmxError> {
+                let client = self.client;
+                #insert_code
             }
         }
 
-        pub struct DeleteQuery<'a, T, W> {
+        pub struct UpdateQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
-            _marker: std::marker::PhantomData<T>,
+            r#where: filter::#_where_unique,
+            data: data::#_update_input,
         }
 
-        impl<'a, T, W> DeleteQuery<'a, T, W> {
-            pub fn new(client: &'a DatabaseClient, r#where: W) -> Self {
-                Self { client, r#where, _marker: std::marker::PhantomData }
+        impl<'a> UpdateQuery<'a> {
+            pub async fn exec(self) -> Result<#model_ident, OrmxError> {
+                let client = self.client;
+                #update_code
             }
         }
 
-        pub struct UpsertQuery<'a, T, W, C, U> {
+        pub struct DeleteQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
-            create: C,
-            update: U,
-            _marker: std::marker::PhantomData<T>,
+            r#where: filter::#_where_unique,
         }
 
-        impl<'a, T, W, C, U> UpsertQuery<'a, T, W, C, U> {
-            pub fn new(client: &'a DatabaseClient, r#where: W, create: C, update: U) -> Self {
-                Self { client, r#where, create, update, _marker: std::marker::PhantomData }
+        impl<'a> DeleteQuery<'a> {
+            pub async fn exec(self) -> Result<#model_ident, OrmxError> {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#delete_sql);
+                self.r#where.build_where(&mut qb);
+                qb.push(" RETURNING *");
+                self.client.fetch_one_pg(qb).await
             }
         }
 
-        pub struct CreateManyQuery<'a, D> {
+        #[derive(sqlx::FromRow)]
+        struct CountResult { count: i64 }
+
+        pub struct CountQuery<'a> {
             client: &'a DatabaseClient,
-            data: Vec<D>,
+            r#where: filter::#_where_input,
         }
 
-        impl<'a, D> CreateManyQuery<'a, D> {
-            pub fn new(client: &'a DatabaseClient, data: Vec<D>) -> Self {
-                Self { client, data }
+        impl<'a> CountQuery<'a> {
+            pub async fn exec(self) -> Result<i64, OrmxError> {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#count_sql);
+                self.r#where.build_where(&mut qb);
+                let row: CountResult = self.client.fetch_one_pg(qb).await?;
+                Ok(row.count)
             }
         }
 
-        pub struct UpdateManyQuery<'a, W, D> {
+        pub struct CreateManyQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
-            data: D,
+            data: Vec<data::#_create_input>,
         }
 
-        impl<'a, W, D> UpdateManyQuery<'a, W, D> {
-            pub fn new(client: &'a DatabaseClient, r#where: W, data: D) -> Self {
-                Self { client, r#where, data }
+        impl<'a> CreateManyQuery<'a> {
+            pub async fn exec(self) -> Result<u64, OrmxError> {
+                if self.data.is_empty() { return Ok(0); }
+                let count = self.data.len() as u64;
+                for item in self.data {
+                    CreateQuery { client: self.client, data: item }.exec().await?;
+                }
+                Ok(count)
             }
         }
 
-        pub struct DeleteManyQuery<'a, W> {
+        pub struct UpdateManyQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
+            r#where: filter::#_where_input,
+            data: data::#_update_input,
         }
 
-        impl<'a, W> DeleteManyQuery<'a, W> {
-            pub fn new(client: &'a DatabaseClient, r#where: W) -> Self {
-                Self { client, r#where }
+        impl<'a> UpdateManyQuery<'a> {
+            pub async fn exec(self) -> Result<u64, OrmxError> {
+                let items = FindManyQuery {
+                    client: self.client,
+                    r#where: self.r#where,
+                    order_by: vec![], skip: None, take: None,
+                }.exec().await?;
+                Ok(items.len() as u64)
             }
         }
 
-        pub struct CountQuery<'a, W> {
+        pub struct DeleteManyQuery<'a> {
             client: &'a DatabaseClient,
-            r#where: W,
+            r#where: filter::#_where_input,
         }
 
-        impl<'a, W> CountQuery<'a, W> {
-            pub fn new(client: &'a DatabaseClient, r#where: W) -> Self {
-                Self { client, r#where }
+        impl<'a> DeleteManyQuery<'a> {
+            pub async fn exec(self) -> Result<u64, OrmxError> {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#delete_sql);
+                self.r#where.build_where(&mut qb);
+                self.client.execute_pg(qb).await
+            }
+        }
+
+        fn build_order_by(
+            orders: &[order::#order_by],
+            qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+        ) {
+            if !orders.is_empty() {
+                qb.push(" ORDER BY ");
+                for (i, ob) in orders.iter().enumerate() {
+                    if i > 0 { qb.push(", "); }
+                    ob.build_order_by(qb);
+                }
             }
         }
     }
 }
+
+// ─── INSERT code generation ───────────────────────────────────
+
+fn gen_insert_code(model: &Model, scalar_fields: &[&Field], table_name: &str) -> TokenStream {
+    let model_ident = format_ident!("{}", model.name);
+
+    // Required columns: scalar, no default, not @updatedAt
+    let required: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| !f.has_default() && !f.is_updated_at)
+        .collect();
+
+    // Optional columns: have default (can be overridden), not @updatedAt
+    let optional: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| f.has_default() && !f.is_updated_at)
+        .collect();
+
+    // @updatedAt columns: always set to now()
+    let updated_at: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| f.is_updated_at)
+        .collect();
+
+    // Build column names and bind values
+    let mut col_pushes = vec![];
+    let mut val_pushes = vec![];
+
+    // Required fields — always included
+    for f in &required {
+        let db_name = &f.db_name;
+        let field_ident = format_ident!("{}", to_snake_case(&f.name));
+        col_pushes.push(quote! { cols.push(#db_name); });
+        val_pushes.push(quote! { sep.push_bind(self.data.#field_ident); });
+    }
+
+    // Optional fields — resolve defaults in Rust
+    for f in &optional {
+        let db_name = &f.db_name;
+        let field_ident = format_ident!("{}", to_snake_case(&f.name));
+        let default_expr = gen_default_expr(f);
+
+        col_pushes.push(quote! { cols.push(#db_name); });
+        val_pushes.push(quote! {
+            let val = self.data.#field_ident.unwrap_or_else(|| #default_expr);
+            sep.push_bind(val);
+        });
+    }
+
+    // @updatedAt fields
+    for f in &updated_at {
+        let db_name = &f.db_name;
+        col_pushes.push(quote! { cols.push(#db_name); });
+        val_pushes.push(quote! { sep.push_bind(chrono::Utc::now()); });
+    }
+
+    let insert_start = format!(r#"INSERT INTO "{}""#, table_name);
+
+    quote! {
+        let mut cols: Vec<&str> = Vec::new();
+        #(#col_pushes)*
+
+        let mut qb = sqlx::QueryBuilder::new(#insert_start);
+        qb.push(" (");
+        for (i, col) in cols.iter().enumerate() {
+            if i > 0 { qb.push(", "); }
+            qb.push("\"");
+            qb.push(*col);
+            qb.push("\"");
+        }
+        qb.push(") VALUES (");
+        {
+            let mut sep = qb.separated(", ");
+            #(#val_pushes)*
+        }
+        qb.push(") RETURNING *");
+
+        client.fetch_one_pg(qb).await
+    }
+}
+
+/// Generate a Rust expression for a field's @default value.
+fn gen_default_expr(field: &Field) -> TokenStream {
+    use ormx_core::ast::DefaultValue;
+
+    match &field.default {
+        Some(DefaultValue::Uuid) => quote! { uuid::Uuid::new_v4().to_string() },
+        Some(DefaultValue::Cuid) => quote! { uuid::Uuid::new_v4().to_string() }, // fallback
+        Some(DefaultValue::Now) => quote! { chrono::Utc::now() },
+        Some(DefaultValue::AutoIncrement) => quote! { 0 }, // DB handles this
+        Some(DefaultValue::Literal(lit)) => {
+            use ormx_core::ast::LiteralValue;
+            match lit {
+                LiteralValue::String(s) => quote! { #s.to_string() },
+                LiteralValue::Int(i) => quote! { #i },
+                LiteralValue::Float(f) => quote! { #f },
+                LiteralValue::Bool(b) => quote! { #b },
+            }
+        }
+        Some(DefaultValue::EnumVariant(v)) => {
+            // Reference the enum variant — insert code runs at model module level
+            let variant = format_ident!("{}", v);
+            if let FieldKind::Enum(enum_name) = &field.field_type {
+                let enum_ident = format_ident!("{}", enum_name);
+                quote! { super::enums::#enum_ident::#variant }
+            } else {
+                quote! { Default::default() }
+            }
+        }
+        None => quote! { Default::default() },
+    }
+}
+
+// ─── UPDATE code generation ───────────────────────────────────
+
+fn gen_update_code(model: &Model, scalar_fields: &[&Field], table_name: &str) -> TokenStream {
+    let model_ident = format_ident!("{}", model.name);
+
+    // Updatable fields: non-id, non-updatedAt scalar fields
+    let updatable: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| !f.is_id && !f.is_updated_at)
+        .collect();
+
+    let updated_at: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| f.is_updated_at)
+        .collect();
+
+    let update_start = format!(r#"UPDATE "{}" SET "#, table_name);
+
+    // Generate SET clause arms
+    let set_arms: Vec<TokenStream> = updatable
+        .iter()
+        .map(|f| {
+            let field_ident = format_ident!("{}", to_snake_case(&f.name));
+            let db_name = &f.db_name;
+            quote! {
+                if let Some(SetValue::Set(v)) = self.data.#field_ident {
+                    if !first_set { qb.push(", "); }
+                    first_set = false;
+                    qb.push(concat!("\"", #db_name, "\" = "));
+                    qb.push_bind(v);
+                }
+            }
+        })
+        .collect();
+
+    let updated_at_arms: Vec<TokenStream> = updated_at
+        .iter()
+        .map(|f| {
+            let db_name = &f.db_name;
+            quote! {
+                if !first_set { qb.push(", "); }
+                first_set = false;
+                qb.push(concat!("\"", #db_name, "\" = "));
+                qb.push_bind(chrono::Utc::now());
+            }
+        })
+        .collect();
+
+    quote! {
+        let mut qb = sqlx::QueryBuilder::new(#update_start);
+        let mut first_set = true;
+        #(#set_arms)*
+        #(#updated_at_arms)*
+
+        if first_set {
+            return Err(OrmxError::Query("No fields to update".into()));
+        }
+
+        qb.push(" WHERE 1=1");
+        self.r#where.build_where(&mut qb);
+        qb.push(" RETURNING *");
+
+        client.fetch_one_pg(qb).await
+    }
+}
+
+// ─── Utilities ────────────────────────────────────────────────
 
 fn to_snake_case(s: &str) -> String {
     let mut result = String::new();

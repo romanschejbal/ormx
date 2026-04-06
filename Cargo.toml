@@ -24,7 +24,7 @@ ormx-migrate = { path = "crates/ormx-migrate" }
 ormx-runtime = { path = "crates/ormx-runtime" }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "chrono", "uuid"] }
 
 # Async
 tokio = { version = "1", features = ["full"] }

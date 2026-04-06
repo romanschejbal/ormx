@@ -12,6 +12,9 @@ pub mod prelude {
     pub use crate::order::{OrderByClause, SortOrder};
     pub use crate::query::SqlBuilder;
     pub use crate::SetValue;
+    pub use sqlx;
+    pub use chrono;
+    pub use uuid;
 }
 
 /// Wrapper for update operations: distinguishes "not set" from "set to value".
