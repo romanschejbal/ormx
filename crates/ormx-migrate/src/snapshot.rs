@@ -1,4 +1,11 @@
 //! Schema snapshot serialization for migration diffing.
+//!
+//! Each migration directory can contain a `_schema_snapshot.json` file that
+//! captures the full [`Schema`] at that point in time. This module provides
+//! [`serialize`] and [`deserialize`] for JSON round-tripping, plus
+//! [`load_latest_snapshot`] to find the most recent snapshot in the migrations
+//! directory. Used by the `Snapshot` migration strategy as an alternative to
+//! the shadow database approach.
 
 use ormx_core::schema::Schema;
 use std::path::Path;

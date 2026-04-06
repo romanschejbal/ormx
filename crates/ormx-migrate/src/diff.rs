@@ -1,7 +1,12 @@
 //! Schema diff engine: compares two Schema IRs and produces migration steps.
+//!
+//! [`diff_schemas`] is the core function. It walks models, fields, enums,
+//! indexes, and foreign keys in both the "from" and "to" schemas and emits a
+//! list of [`MigrationStep`]s (create table, add column, alter column, etc.).
+//! These steps are then rendered into SQL by the [`super::sql`] module.
 
 use ormx_core::schema::*;
-use ormx_core::types::ScalarType;
+use ormx_core::utils::to_snake_case;
 use std::collections::HashMap;
 
 /// A single atomic change between two schema versions.
@@ -454,21 +459,11 @@ fn referential_action_sql(action: ormx_core::ast::ReferentialAction) -> String {
     }
 }
 
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_lowercase().next().unwrap());
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ormx_core::types::DatabaseProvider;
+    use ormx_core::types::{DatabaseProvider, ScalarType};
+    use ormx_core::utils::to_snake_case;
 
     fn make_schema(models: Vec<Model>, enums: Vec<Enum>) -> Schema {
         Schema {

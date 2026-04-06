@@ -1,4 +1,11 @@
-use crate::query::SqlBuilder;
+//! Type-safe filter types for query WHERE clauses.
+//!
+//! Each scalar type has a corresponding filter struct (e.g., [`StringFilter`],
+//! [`IntFilter`], [`DateTimeFilter`]) with fields like `equals`, `not`,
+//! `contains`, `gt`, `lt`, `in`, etc. Enums use the generic [`EnumFilter<E>`].
+//!
+//! Generated `WhereInput` structs compose these filters and implement the
+//! [`WhereClause`] trait to append SQL conditions to a [`SqlBuilder`].
 
 /// Filter operations for String fields.
 #[derive(Debug, Clone, Default)]
@@ -108,19 +115,4 @@ impl<E: Clone> Default for EnumFilter<E> {
 pub enum QueryMode {
     Default,
     Insensitive,
-}
-
-/// Trait that all generated WhereInput types implement.
-///
-/// `apply_to` appends WHERE conditions to the SQL builder.
-/// The `bind_to_*` methods bind the parameter values in the same order.
-pub trait WhereClause {
-    /// Append SQL conditions to the builder.
-    fn apply_to(&self, builder: &mut SqlBuilder);
-}
-
-/// Trait for unique where inputs (find by @id or @unique field).
-pub trait UniqueWhereClause {
-    /// Append SQL condition for the unique lookup.
-    fn apply_to(&self, builder: &mut SqlBuilder);
 }

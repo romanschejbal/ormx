@@ -1,7 +1,18 @@
 //! Validated and resolved Schema IR (Intermediate Representation).
 //!
-//! This is the single source of truth consumed by codegen and migration.
-//! It is produced by the validator from the raw AST.
+//! This is the **single source of truth** consumed by codegen and the migration
+//! engine. It is produced by the validator from the raw [`crate::ast`] AST.
+//!
+//! Key differences from the raw AST:
+//! - Type names are resolved to [`FieldKind::Scalar`], [`FieldKind::Enum`],
+//!   or [`FieldKind::Model`].
+//! - Table and column names are inferred (snake_case + plural) or taken from
+//!   `@@map` / `@map` attributes.
+//! - Relations are fully resolved with cardinality and referential actions.
+//! - Primary keys, indexes, and unique constraints are normalized.
+//!
+//! All types in this module support optional `serde` serialization (behind the
+//! `serde` feature flag) for JSON schema snapshots used by the migration engine.
 
 use crate::ast::{DefaultValue, ReferentialAction};
 use crate::types::{DatabaseProvider, ScalarType};

@@ -1,9 +1,25 @@
+//! Semantic validation of the raw AST into the resolved Schema IR.
+//!
+//! The validator walks the [`ormx_core::ast::SchemaFile`] produced by the
+//! parser and performs the following:
+//!
+//! - Resolves field type names to scalars, enums, or model references.
+//! - Infers database table and column names from `@@map`/`@map` or snake_case
+//!   conventions.
+//! - Checks that every model has a primary key (`@id` or `@@id`).
+//! - Detects duplicate model/enum names and unknown type references.
+//! - Resolves relation cardinality and referential actions.
+//!
+//! The output is an [`ormx_core::schema::Schema`], the canonical IR consumed
+//! by codegen and the migration engine.
+
 use std::collections::HashSet;
 
 use ormx_core::ast;
 use ormx_core::error::CoreError;
 use ormx_core::schema::*;
 use ormx_core::types::{DatabaseProvider, ScalarType};
+use ormx_core::utils::to_snake_case;
 
 /// Validate a parsed AST and produce a resolved Schema IR.
 pub fn validate(ast: &ast::SchemaFile) -> Result<Schema, CoreError> {
@@ -279,22 +295,11 @@ fn validate_field(
     })
 }
 
-/// Convert PascalCase or camelCase to snake_case.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_lowercase().next().unwrap());
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::parser::parse;
+    use ormx_core::utils::to_snake_case;
 
     #[test]
     fn test_validate_basic_schema() {

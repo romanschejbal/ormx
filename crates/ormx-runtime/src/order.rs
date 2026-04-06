@@ -1,3 +1,9 @@
+//! Ordering support for query results.
+//!
+//! Defines [`SortOrder`] (ascending / descending) and the [`OrderByClause`]
+//! trait that generated per-model `OrderByInput` enums implement. This allows
+//! query builders to chain `.order_by(...)` calls in a type-safe way.
+
 /// Sort direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortOrder {
@@ -12,10 +18,4 @@ impl SortOrder {
             Self::Desc => "DESC",
         }
     }
-}
-
-/// Trait that all generated OrderBy types implement.
-pub trait OrderByClause {
-    /// Append the ORDER BY column and direction to the SQL builder.
-    fn apply_to(&self, builder: &mut crate::query::SqlBuilder);
 }

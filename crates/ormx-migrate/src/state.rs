@@ -1,4 +1,10 @@
-//! Tracks migration state in the database via the `_ormx_migrations` table.
+//! Tracks which migrations have been applied via the `_ormx_migrations` table.
+//!
+//! This module manages a metadata table in the user's database that records
+//! each applied migration's name, SHA-256 checksum, and timestamp. It provides
+//! functions to create the table, list applied migrations, mark new ones as
+//! applied, and clear all records (for reset). Separate implementations exist
+//! for PostgreSQL and SQLite.
 
 use chrono::{DateTime, Utc};
 

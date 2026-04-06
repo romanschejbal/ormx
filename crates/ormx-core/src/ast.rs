@@ -1,6 +1,12 @@
-//! Raw AST types produced by the parser.
+//! Raw Abstract Syntax Tree types produced by the parser.
 //!
-//! These represent the schema file as-written, before validation and resolution.
+//! These types represent the `.ormx` schema file exactly as written, before any
+//! validation or resolution takes place. They preserve source location spans for
+//! error reporting and map one-to-one with the grammar rules in `grammar.pest`.
+//!
+//! After parsing, the AST is fed into the validator
+//! ([`crate::schema`] / [`ormx_parser::validator`]) which resolves types,
+//! infers table names, and produces the canonical [`crate::schema::Schema`] IR.
 
 /// A source location span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

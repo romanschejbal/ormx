@@ -1,4 +1,18 @@
-// ormx schema grammar
+// ────────────────────────────────────────────────────────────────────────
+// ormx schema grammar (PEG)
+//
+// This file defines the complete grammar for .ormx schema files using the
+// pest parser-generator syntax.  It covers:
+//   - datasource and generator blocks
+//   - enum definitions
+//   - model definitions with fields, field types, and attributes
+//   - block-level attributes (@@index, @@unique, @@map, @@id)
+//   - field-level attributes (@id, @unique, @default, @relation, @map, @db.*)
+//   - literals, identifiers, comments, and whitespace
+//
+// The grammar intentionally mirrors the Prisma schema language so that users
+// familiar with Prisma can adopt ormx with minimal friction.
+// ────────────────────────────────────────────────────────────────────────
 
 schema = { SOI ~ (block | NEWLINE)* ~ EOI }
 

@@ -1,3 +1,12 @@
+//! PEG-based parser that turns a `.ormx` schema string into a raw AST.
+//!
+//! Uses the `pest` parser generator with the grammar defined in
+//! `grammar.pest`. The public entry point is [`parse`], which returns an
+//! [`ormx_core::ast::SchemaFile`] on success or a [`ParseError`] on failure.
+//!
+//! This module only handles syntactic parsing. Semantic validation (type
+//! resolution, constraint checking) is performed by [`crate::validator`].
+
 use ormx_core::ast::*;
 use pest::Parser;
 use pest_derive::Parser;

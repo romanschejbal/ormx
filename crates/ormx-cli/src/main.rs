@@ -1,3 +1,9 @@
+//! CLI tool for the ormx ORM.
+//!
+//! Provides commands for initializing projects, generating the Rust client,
+//! managing migrations, and introspecting databases. Run `ormx --help` for
+//! full usage information.
+
 mod commands;
 
 use clap::{Parser, Subcommand};

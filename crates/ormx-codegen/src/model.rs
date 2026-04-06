@@ -1,5 +1,19 @@
+//! Generates per-model Rust modules (struct, filters, data inputs, ordering, CRUD).
+//!
+//! For each model in the schema, this module produces:
+//!
+//! - A **data struct** (e.g., `User`) with `sqlx::FromRow` and serde derives.
+//! - A **filter submodule** with `WhereInput` and `WhereUniqueInput` types.
+//! - A **data submodule** with `CreateInput` and `UpdateInput` types.
+//! - An **order submodule** with `OrderByInput`.
+//! - An **`Actions` struct** exposing `create`, `find_unique`, `find_many`,
+//!   `update`, `delete`, `upsert`, and batch operations.
+//! - **Query builder structs** that chain filters, ordering, pagination, and
+//!   include clauses before calling `.exec()`.
+
 use ormx_core::schema::{Field, FieldKind, Model};
 use ormx_core::types::ScalarType;
+use ormx_core::utils::{to_pascal_case, to_snake_case};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -494,6 +508,7 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
 
     let insert_code = gen_insert_code(model, scalar_fields, table_name);
     let update_code = gen_update_code(model, scalar_fields, table_name);
+    let update_many_code = gen_update_many_code(model, scalar_fields, table_name);
 
     quote! {
         // ── Generic helper: build ORDER BY clause ──────────────
@@ -766,12 +781,8 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
 
         impl<'a> UpdateManyQuery<'a> {
             pub async fn exec(self) -> Result<u64, OrmxError> {
-                let items = FindManyQuery {
-                    client: self.client,
-                    r#where: self.r#where,
-                    order_by: vec![], skip: None, take: None,
-                }.exec().await?;
-                Ok(items.len() as u64)
+                let client = self.client;
+                #update_many_code
             }
         }
 
@@ -1013,31 +1024,81 @@ fn gen_update_code(model: &Model, scalar_fields: &[&Field], table_name: &str) ->
     }
 }
 
-// ─── Utilities ────────────────────────────────────────────────
+// ─── UPDATE MANY code generation ──────────────────────────────
 
-pub fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_lowercase().next().unwrap());
-    }
-    result
-}
+fn gen_update_many_code(_model: &Model, scalar_fields: &[&Field], table_name: &str) -> TokenStream {
+    // Updatable fields: non-id, non-updatedAt scalar fields
+    let updatable: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| !f.is_id && !f.is_updated_at)
+        .collect();
 
-pub fn to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-    for c in s.chars() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_uppercase().next().unwrap());
-            capitalize_next = false;
-        } else {
-            result.push(c);
+    let updated_at: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| f.is_updated_at)
+        .collect();
+
+    let update_start = format!(r#"UPDATE "{}" SET "#, table_name);
+
+    // Generate SET clause arms
+    let set_arms: Vec<TokenStream> = updatable
+        .iter()
+        .map(|f| {
+            let field_ident = format_ident!("{}", to_snake_case(&f.name));
+            let db_name = &f.db_name;
+            quote! {
+                if let Some(SetValue::Set(v)) = self.data.#field_ident {
+                    if !first_set { qb.push(", "); }
+                    first_set = false;
+                    qb.push(concat!("\"", #db_name, "\" = "));
+                    qb.push_bind(v);
+                }
+            }
+        })
+        .collect();
+
+    let updated_at_arms: Vec<TokenStream> = updated_at
+        .iter()
+        .map(|f| {
+            let db_name = &f.db_name;
+            quote! {
+                if !first_set { qb.push(", "); }
+                first_set = false;
+                qb.push(concat!("\"", #db_name, "\" = "));
+                qb.push_bind(chrono::Utc::now());
+            }
+        })
+        .collect();
+
+    quote! {
+        macro_rules! build_update_many {
+            ($qb_type:ty) => {{
+                let mut qb = sqlx::QueryBuilder::<$qb_type>::new(#update_start);
+                let mut first_set = true;
+                #(#set_arms)*
+                #(#updated_at_arms)*
+
+                if first_set {
+                    return Ok(0);
+                }
+
+                qb.push(" WHERE 1=1");
+                self.r#where.build_where(&mut qb);
+                qb
+            }};
+        }
+
+        match client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_update_many!(sqlx::Postgres);
+                client.execute_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_update_many!(sqlx::Sqlite);
+                client.execute_sqlite(qb).await
+            }
         }
     }
-    result
 }

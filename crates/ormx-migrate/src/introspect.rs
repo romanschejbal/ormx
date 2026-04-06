@@ -1,9 +1,15 @@
-//! Database introspection: reads the actual database schema and converts
-//! it to a Schema IR. This is the foundation for shadow database diffing.
+//! Database introspection: reads a live database and converts its structure
+//! into the [`Schema`] IR.
+//!
+//! This is the foundation for both shadow database diffing and the `ormx db pull`
+//! command. For PostgreSQL, it queries `information_schema` and `pg_catalog`.
+//! For SQLite, it uses `PRAGMA table_info`, `PRAGMA foreign_key_list`, and
+//! `PRAGMA index_list`.
 
 use ormx_core::ast::{DefaultValue, LiteralValue, ReferentialAction};
 use ormx_core::schema::*;
 use ormx_core::types::{DatabaseProvider, ScalarType};
+use ormx_core::utils::{to_camel_case, to_pascal_case};
 
 #[cfg(feature = "postgres")]
 use sqlx::PgPool;
@@ -653,30 +659,5 @@ fn parse_referential_action(rule: &str) -> ReferentialAction {
         "SET DEFAULT" => ReferentialAction::SetDefault,
         "RESTRICT" => ReferentialAction::Restrict,
         _ => ReferentialAction::NoAction,
-    }
-}
-
-fn to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-    for c in s.chars() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_uppercase().next().unwrap());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-fn to_camel_case(s: &str) -> String {
-    let pascal = to_pascal_case(s);
-    let mut chars = pascal.chars();
-    match chars.next() {
-        Some(c) => c.to_lowercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
     }
 }

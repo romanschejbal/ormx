@@ -1,3 +1,11 @@
+//! Parameterized SQL query builder.
+//!
+//! [`SqlBuilder`] constructs SQL strings with properly indexed parameter
+//! placeholders. It supports both PostgreSQL (`$1`, `$2`, ...) and SQLite
+//! (`?`) placeholder styles, selected automatically based on the active
+//! [`DatabaseClient`]. The builder also provides safe identifier quoting to
+//! prevent SQL injection in table and column names.
+
 use crate::client::DatabaseClient;
 
 /// Determines the SQL placeholder style.
@@ -24,6 +32,10 @@ impl ParamStyle {
 ///
 /// Tracks parameter bindings and builds SQL strings with placeholders.
 /// Supports both PostgreSQL (`$1`) and SQLite (`?`) styles.
+///
+/// Note: the generated client code uses `sqlx::QueryBuilder` directly for its
+/// queries. This builder is available for advanced use cases where manual SQL
+/// construction with database-aware placeholders is needed.
 #[derive(Debug)]
 pub struct SqlBuilder {
     sql: String,

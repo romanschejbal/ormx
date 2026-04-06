@@ -1,3 +1,10 @@
+//! Database connection pool wrapper.
+//!
+//! [`DatabaseClient`] is an enum that wraps either a PostgreSQL or SQLite
+//! connection pool (via sqlx). It provides auto-detection from the connection
+//! URL and exposes typed `fetch_all`, `fetch_optional`, `fetch_one`, and
+//! `execute` helpers used by the generated query builders.
+
 use crate::error::OrmxError;
 
 /// The database client, wrapping an sqlx connection pool.

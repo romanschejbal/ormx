@@ -1,3 +1,8 @@
+//! Unified error type for ormx runtime operations.
+//!
+//! [`OrmxError`] wraps sqlx database errors and adds ormx-specific variants
+//! for not-found conditions, query-building failures, and connection issues.
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]

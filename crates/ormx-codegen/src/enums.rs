@@ -1,3 +1,9 @@
+//! Generates the `enums.rs` module from schema enum definitions.
+//!
+//! Each schema enum becomes a Rust enum with `sqlx::Type`, `Serialize`,
+//! `Deserialize`, and `Display` derives, ready for use in queries and
+//! serialization.
+
 use ormx_core::schema::Enum;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};

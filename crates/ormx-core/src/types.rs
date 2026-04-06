@@ -1,3 +1,9 @@
+//! Fundamental type definitions shared across the ormx ecosystem.
+//!
+//! This module defines [`DatabaseProvider`] (PostgreSQL, SQLite, MySQL) and
+//! [`ScalarType`] (String, Int, DateTime, etc.) along with their mappings to
+//! Rust types, PostgreSQL column types, and SQLite column types.
+
 use std::fmt;
 use std::str::FromStr;
 

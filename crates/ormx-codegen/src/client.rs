@@ -1,4 +1,12 @@
+//! Generates the `client.rs` module containing the `OrmxClient` struct.
+//!
+//! `OrmxClient` is the user-facing entry point. It wraps a
+//! [`ormx_runtime::client::DatabaseClient`] and exposes a method per model
+//! (e.g., `.user()`, `.post()`) that returns the model's `Actions` struct
+//! for performing CRUD operations.
+
 use ormx_core::schema::Schema;
+use ormx_core::utils::to_snake_case;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -47,15 +55,4 @@ pub fn generate_client_module(schema: &Schema) -> TokenStream {
             }
         }
     }
-}
-
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_lowercase().next().unwrap());
-    }
-    result
 }

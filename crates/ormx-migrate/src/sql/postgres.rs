@@ -1,3 +1,9 @@
+//! PostgreSQL SQL renderer for migration steps.
+//!
+//! Generates PostgreSQL-specific DDL: `CREATE TYPE` for enums,
+//! `ALTER TABLE ... ALTER COLUMN` for column modifications, `$N` parameter
+//! placeholders, and `CASCADE` on `DROP TABLE`.
+
 use super::SqlRenderer;
 use crate::diff::*;
 

@@ -1,10 +1,9 @@
 //! Code generation for relation support: Include, WithRelations, batched loading.
 
 use ormx_core::schema::{Field, FieldKind, Model, RelationType, Schema};
+use ormx_core::utils::to_snake_case;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-
-use crate::model::to_snake_case;
 
 /// Information about a relation from one model to another.
 pub struct RelationInfo<'a> {
@@ -148,6 +147,137 @@ pub fn gen_relation_types(model: &Model, schema: &Schema) -> TokenStream {
     }
 }
 
+/// Helper: generate code to load related rows using QueryBuilder and dispatch
+/// to both Postgres and Sqlite.
+fn gen_batched_load_many(
+    rel: &RelationInfo<'_>,
+    load_var: &proc_macro2::Ident,
+    field_name: &proc_macro2::Ident,
+    id_source_ident: &proc_macro2::Ident,
+    lookup_col_str: &str,
+    insert_key_ident: &proc_macro2::Ident,
+) -> TokenStream {
+    let related_mod = format_ident!("{}", to_snake_case(&rel.related_model.name));
+    let related_struct = format_ident!("{}", rel.related_model.name);
+    let related_table = &rel.related_model.db_name;
+
+    let select_base = format!(
+        r#"SELECT * FROM "{}" WHERE "{}" IN ("#,
+        related_table, lookup_col_str
+    );
+
+    quote! {
+        let mut #load_var: std::collections::HashMap<String, Vec<super::#related_mod::#related_struct>> = std::collections::HashMap::new();
+        if include.#field_name {
+            let ids: Vec<String> = records.iter()
+                .map(|r| r.#id_source_ident.clone())
+                .collect();
+
+            if !ids.is_empty() {
+                macro_rules! build_in_query {
+                    ($db:ty) => {{
+                        let mut qb = sqlx::QueryBuilder::<$db>::new(#select_base);
+                        let mut sep = qb.separated(", ");
+                        for id in &ids {
+                            sep.push_bind(id.clone());
+                        }
+                        qb.push(")");
+                        qb
+                    }};
+                }
+
+                match client {
+                    DatabaseClient::Postgres(pool) => {
+                        let mut qb = build_in_query!(sqlx::Postgres);
+                        let related_rows: Vec<super::#related_mod::#related_struct> =
+                            qb.build_query_as().fetch_all(pool).await
+                                .map_err(OrmxError::from)?;
+                        for row in related_rows {
+                            #load_var.entry(row.#insert_key_ident.clone())
+                                .or_default()
+                                .push(row);
+                        }
+                    }
+                    DatabaseClient::Sqlite(pool) => {
+                        let mut qb = build_in_query!(sqlx::Sqlite);
+                        let related_rows: Vec<super::#related_mod::#related_struct> =
+                            qb.build_query_as().fetch_all(pool).await
+                                .map_err(OrmxError::from)?;
+                        for row in related_rows {
+                            #load_var.entry(row.#insert_key_ident.clone())
+                                .or_default()
+                                .push(row);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Helper: generate code to load related rows for a single-value (OneToOne / ManyToOne) relation.
+fn gen_batched_load_one(
+    rel: &RelationInfo<'_>,
+    load_var: &proc_macro2::Ident,
+    field_name: &proc_macro2::Ident,
+    id_source_ident: &proc_macro2::Ident,
+    lookup_col_str: &str,
+    insert_key_ident: &proc_macro2::Ident,
+) -> TokenStream {
+    let related_mod = format_ident!("{}", to_snake_case(&rel.related_model.name));
+    let related_struct = format_ident!("{}", rel.related_model.name);
+    let related_table = &rel.related_model.db_name;
+
+    let select_base = format!(
+        r#"SELECT * FROM "{}" WHERE "{}" IN ("#,
+        related_table, lookup_col_str
+    );
+
+    quote! {
+        let mut #load_var: std::collections::HashMap<String, super::#related_mod::#related_struct> = std::collections::HashMap::new();
+        if include.#field_name {
+            let ids: Vec<String> = records.iter()
+                .map(|r| r.#id_source_ident.clone())
+                .collect();
+
+            if !ids.is_empty() {
+                macro_rules! build_in_query {
+                    ($db:ty) => {{
+                        let mut qb = sqlx::QueryBuilder::<$db>::new(#select_base);
+                        let mut sep = qb.separated(", ");
+                        for id in &ids {
+                            sep.push_bind(id.clone());
+                        }
+                        qb.push(")");
+                        qb
+                    }};
+                }
+
+                match client {
+                    DatabaseClient::Postgres(pool) => {
+                        let mut qb = build_in_query!(sqlx::Postgres);
+                        let related_rows: Vec<super::#related_mod::#related_struct> =
+                            qb.build_query_as().fetch_all(pool).await
+                                .map_err(OrmxError::from)?;
+                        for row in related_rows {
+                            #load_var.insert(row.#insert_key_ident.clone(), row);
+                        }
+                    }
+                    DatabaseClient::Sqlite(pool) => {
+                        let mut qb = build_in_query!(sqlx::Sqlite);
+                        let related_rows: Vec<super::#related_mod::#related_struct> =
+                            qb.build_query_as().fetch_all(pool).await
+                                .map_err(OrmxError::from)?;
+                        for row in related_rows {
+                            #load_var.insert(row.#insert_key_ident.clone(), row);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn gen_load_arms(relations: &[RelationInfo<'_>], model: &Model) -> TokenStream {
     let _model_ident = format_ident!("{}", model.name);
     let with_relations_name = format_ident!("{}WithRelations", model.name);
@@ -157,9 +287,6 @@ fn gen_load_arms(relations: &[RelationInfo<'_>], model: &Model) -> TokenStream {
 
     for rel in relations {
         let field_name = format_ident!("{}", to_snake_case(&rel.field.name));
-        let related_mod = format_ident!("{}", to_snake_case(&rel.related_model.name));
-        let related_struct = format_ident!("{}", rel.related_model.name);
-        let related_table = &rel.related_model.db_name;
         let fk_col_str = &rel.fk_column;
         let ref_col_str = &rel.ref_column;
         let fk_col_ident = format_ident!("{}", rel.fk_column);
@@ -170,44 +297,14 @@ fn gen_load_arms(relations: &[RelationInfo<'_>], model: &Model) -> TokenStream {
                 // Batched loading: SELECT * FROM related WHERE fk IN (parent_ids)
                 let load_var = format_ident!("{}_map", to_snake_case(&rel.field.name));
 
-                relation_loads.push(quote! {
-                    let mut #load_var: std::collections::HashMap<String, Vec<super::#related_mod::#related_struct>> = std::collections::HashMap::new();
-                    if include.#field_name {
-                        let parent_ids: Vec<String> = records.iter()
-                            .map(|r| r.#ref_col_ident.clone())
-                            .collect();
-
-                        if !parent_ids.is_empty() {
-                            let sql = format!(
-                                "SELECT * FROM \"{}\" WHERE \"{}\" IN ({})",
-                                #related_table,
-                                #fk_col_str,
-                                parent_ids.iter().enumerate()
-                                    .map(|(i, _)| format!("${}", i + 1))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            );
-
-                            let mut query = sqlx::query_as::<sqlx::Postgres, super::#related_mod::#related_struct>(&sql);
-                            for id in &parent_ids {
-                                query = query.bind(id);
-                            }
-
-                            match client {
-                                DatabaseClient::Postgres(pool) => {
-                                    let related_rows = query.fetch_all(pool).await
-                                        .map_err(OrmxError::from)?;
-                                    for row in related_rows {
-                                        #load_var.entry(row.#fk_col_ident.clone())
-                                            .or_default()
-                                            .push(row);
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                });
+                relation_loads.push(gen_batched_load_many(
+                    rel,
+                    &load_var,
+                    &field_name,
+                    &ref_col_ident,
+                    fk_col_str,
+                    &fk_col_ident,
+                ));
 
                 let ref_col_ident = format_ident!("{}", ref_col_str);
                 field_inits.push(quote! {
@@ -230,42 +327,14 @@ fn gen_load_arms(relations: &[RelationInfo<'_>], model: &Model) -> TokenStream {
                     .any(|f| to_snake_case(&f.name) == *fk_col_str && f.is_scalar());
 
                 if has_fk {
-                    relation_loads.push(quote! {
-                        let mut #load_var: std::collections::HashMap<String, super::#related_mod::#related_struct> = std::collections::HashMap::new();
-                        if include.#field_name {
-                            let fk_ids: Vec<String> = records.iter()
-                                .map(|r| r.#fk_field.clone())
-                                .collect();
-
-                            if !fk_ids.is_empty() {
-                                let sql = format!(
-                                    "SELECT * FROM \"{}\" WHERE \"{}\" IN ({})",
-                                    #related_table,
-                                    #ref_col_str,
-                                    fk_ids.iter().enumerate()
-                                        .map(|(i, _)| format!("${}", i + 1))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                );
-
-                                let mut query = sqlx::query_as::<sqlx::Postgres, super::#related_mod::#related_struct>(&sql);
-                                for id in &fk_ids {
-                                    query = query.bind(id);
-                                }
-
-                                match client {
-                                    DatabaseClient::Postgres(pool) => {
-                                        let related_rows = query.fetch_all(pool).await
-                                            .map_err(OrmxError::from)?;
-                                        for row in related_rows {
-                                            #load_var.insert(row.#ref_col_ident.clone(), row);
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    });
+                    relation_loads.push(gen_batched_load_one(
+                        rel,
+                        &load_var,
+                        &field_name,
+                        &fk_field,
+                        ref_col_str,
+                        &ref_col_ident,
+                    ));
 
                     field_inits.push(quote! {
                         #field_name: if include.#field_name {
@@ -279,42 +348,14 @@ fn gen_load_arms(relations: &[RelationInfo<'_>], model: &Model) -> TokenStream {
                     // Batch load: SELECT * FROM profiles WHERE user_id IN (user_ids)
                     let ref_col_ident = format_ident!("{}", ref_col_str);
 
-                    relation_loads.push(quote! {
-                        let mut #load_var: std::collections::HashMap<String, super::#related_mod::#related_struct> = std::collections::HashMap::new();
-                        if include.#field_name {
-                            let parent_ids: Vec<String> = records.iter()
-                                .map(|r| r.#ref_col_ident.clone())
-                                .collect();
-
-                            if !parent_ids.is_empty() {
-                                let sql = format!(
-                                    "SELECT * FROM \"{}\" WHERE \"{}\" IN ({})",
-                                    #related_table,
-                                    #fk_col_str,
-                                    parent_ids.iter().enumerate()
-                                        .map(|(i, _)| format!("${}", i + 1))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                );
-
-                                let mut query = sqlx::query_as::<sqlx::Postgres, super::#related_mod::#related_struct>(&sql);
-                                for id in &parent_ids {
-                                    query = query.bind(id);
-                                }
-
-                                match client {
-                                    DatabaseClient::Postgres(pool) => {
-                                        let related_rows = query.fetch_all(pool).await
-                                            .map_err(OrmxError::from)?;
-                                        for row in related_rows {
-                                            #load_var.insert(row.#fk_col_ident.clone(), row);
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    });
+                    relation_loads.push(gen_batched_load_one(
+                        rel,
+                        &load_var,
+                        &field_name,
+                        &ref_col_ident,
+                        fk_col_str,
+                        &fk_col_ident,
+                    ));
 
                     field_inits.push(quote! {
                         #field_name: if include.#field_name {

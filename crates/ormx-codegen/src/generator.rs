@@ -1,4 +1,13 @@
+//! Top-level code generation orchestrator.
+//!
+//! [`generate`] is the main entry point. It takes a validated
+//! [`ormx_core::schema::Schema`] and an output directory, then writes all
+//! generated Rust source files: per-model modules, an enums module, the
+//! `OrmxClient` module, and a `mod.rs` that ties them together. Each file is
+//! prefixed with an auto-generated header so users know not to edit it.
+
 use ormx_core::schema::Schema;
+use ormx_core::utils::to_snake_case;
 use std::fs;
 use std::path::Path;
 
@@ -74,17 +83,6 @@ fn write_file(dir: &Path, filename: &str, content: &str) -> Result<(), GenerateE
         .map_err(|e| GenerateError::Io(format!("Failed to write {}: {e}", path.display())))?;
 
     Ok(())
-}
-
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_lowercase().next().unwrap());
-    }
-    result
 }
 
 #[derive(Debug)]

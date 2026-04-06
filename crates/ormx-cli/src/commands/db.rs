@@ -1,4 +1,5 @@
 use ormx_core::types::DatabaseProvider;
+use ormx_core::utils::to_snake_case;
 use std::path::Path;
 
 /// Introspect a live database and generate a schema.ormx file from it.
@@ -150,15 +151,4 @@ fn default_to_string(d: &ormx_core::ast::DefaultValue) -> String {
         },
         DefaultValue::EnumVariant(v) => v.clone(),
     }
-}
-
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_lowercase().next().unwrap());
-    }
-    result
 }

@@ -1,4 +1,13 @@
 //! Migration runner: orchestrates creating, applying, and managing migrations.
+//!
+//! [`MigrationRunner`] is the high-level API used by the CLI. It handles:
+//! - Creating new migration directories with SQL and JSON schema snapshots.
+//! - Applying pending migrations to a database with checksum verification.
+//! - Reporting migration status (applied vs. pending).
+//!
+//! Two strategies are supported via [`MigrationStrategy`]:
+//! - `ShadowDatabase` (default) -- accurate but requires a database connection.
+//! - `Snapshot` -- fast and offline but may drift from manually edited SQL.
 
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;

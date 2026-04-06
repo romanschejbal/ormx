@@ -1,3 +1,11 @@
+//! Domain-level errors for schema validation.
+//!
+//! [`CoreError`] covers issues that can be detected purely from the schema
+//! structure: missing primary keys, unknown types, invalid defaults, duplicate
+//! names, and malformed relation attributes. These errors are raised during the
+//! validation step (AST to Schema IR) and are independent of any database
+//! connection.
+
 use core::fmt;
 
 /// Core errors that can occur in ormx domain logic.
@@ -88,3 +96,5 @@ impl fmt::Display for CoreError {
         }
     }
 }
+
+impl std::error::Error for CoreError {}

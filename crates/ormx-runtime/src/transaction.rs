@@ -1,14 +1,31 @@
+//! Database transaction support.
+//!
+//! Provides [`run_transaction`] for executing a closure within a database
+//! transaction, and [`TransactionClient`] as a wrapper around sqlx transaction
+//! handles. The transaction is automatically committed on success or rolled
+//! back on error.
+
 use crate::client::DatabaseClient;
 use crate::error::OrmxError;
 
 /// Execute a closure within a database transaction.
 ///
-/// If the closure returns `Ok`, the transaction is committed.
-/// If it returns `Err` or panics, the transaction is rolled back.
+/// The closure receives a [`TransactionClient`] and must return it alongside the
+/// result on success so the transaction can be committed. If the closure returns
+/// `Err`, the transaction is rolled back automatically (sqlx rolls back on drop).
+///
+/// # Example
+///
+/// ```ignore
+/// let result = run_transaction(&client, |tx| async move {
+///     // ... use tx for queries ...
+///     Ok((value, tx))
+/// }).await?;
+/// ```
 pub async fn run_transaction<F, Fut, T>(client: &DatabaseClient, f: F) -> Result<T, OrmxError>
 where
     F: FnOnce(TransactionClient) -> Fut,
-    Fut: std::future::Future<Output = Result<T, OrmxError>>,
+    Fut: std::future::Future<Output = Result<(T, TransactionClient), OrmxError>>,
 {
     match client {
         #[cfg(feature = "postgres")]
@@ -16,8 +33,14 @@ where
             let tx = pool.begin().await?;
             let tx_client = TransactionClient::Postgres(tx);
             match f(tx_client).await {
-                Ok(result) => Ok(result),
-                Err(e) => Err(e),
+                Ok((result, tx_client)) => {
+                    tx_client.commit().await?;
+                    Ok(result)
+                }
+                Err(e) => {
+                    // Transaction is dropped here, which triggers auto-rollback.
+                    Err(e)
+                }
             }
         }
         #[cfg(feature = "sqlite")]
@@ -25,8 +48,14 @@ where
             let tx = pool.begin().await?;
             let tx_client = TransactionClient::Sqlite(tx);
             match f(tx_client).await {
-                Ok(result) => Ok(result),
-                Err(e) => Err(e),
+                Ok((result, tx_client)) => {
+                    tx_client.commit().await?;
+                    Ok(result)
+                }
+                Err(e) => {
+                    // Transaction is dropped here, which triggers auto-rollback.
+                    Err(e)
+                }
             }
         }
     }

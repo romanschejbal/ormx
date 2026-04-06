@@ -1,3 +1,10 @@
+//! SQLite SQL renderer for migration steps.
+//!
+//! Handles SQLite-specific limitations: enums are represented as TEXT columns
+//! (with explanatory comments in the output), `ALTER COLUMN` is not supported
+//! (a comment is emitted instead), and foreign key constraints cannot be added
+//! after table creation. `SERIAL` types are mapped to `INTEGER`.
+
 use super::SqlRenderer;
 use crate::diff::*;
 
