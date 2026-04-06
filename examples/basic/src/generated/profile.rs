@@ -320,18 +320,119 @@ impl<'a> ProfileActions<'a> {
         }
     }
 }
+fn build_order_by<'args, DB: sqlx::Database>(
+    orders: &[order::ProfileOrderByInput],
+    qb: &mut sqlx::QueryBuilder<'args, DB>,
+) {
+    if !orders.is_empty() {
+        qb.push(" ORDER BY ");
+        for (i, ob) in orders.iter().enumerate() {
+            if i > 0 {
+                qb.push(", ");
+            }
+            ob.build_order_by(qb);
+        }
+    }
+}
+fn build_select_query<'args, DB: sqlx::Database>(
+    base_sql: &str,
+    where_input: &filter::ProfileWhereInput,
+    orders: &[order::ProfileOrderByInput],
+    take: Option<i64>,
+    skip: Option<i64>,
+) -> sqlx::QueryBuilder<'args, DB>
+where
+    i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    String: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    Option<String>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+{
+    let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+    where_input.build_where(&mut qb);
+    build_order_by(orders, &mut qb);
+    if let Some(take) = take {
+        qb.push(" LIMIT ");
+        qb.push_bind(take);
+    }
+    if let Some(skip) = skip {
+        qb.push(" OFFSET ");
+        qb.push_bind(skip);
+    }
+    qb
+}
+fn build_unique_select_query<'args, DB: sqlx::Database>(
+    base_sql: &str,
+    where_unique: &filter::ProfileWhereUniqueInput,
+) -> sqlx::QueryBuilder<'args, DB>
+where
+    i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    String: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    Option<String>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+{
+    let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+    where_unique.build_where(&mut qb);
+    qb.push(" LIMIT 1");
+    qb
+}
+fn build_delete_query<'args, DB: sqlx::Database>(
+    base_sql: &str,
+    where_unique: &filter::ProfileWhereUniqueInput,
+) -> sqlx::QueryBuilder<'args, DB>
+where
+    i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    String: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    Option<String>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+{
+    let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+    where_unique.build_where(&mut qb);
+    qb.push(" RETURNING *");
+    qb
+}
+fn build_count_query<'args, DB: sqlx::Database>(
+    base_sql: &str,
+    where_input: &filter::ProfileWhereInput,
+) -> sqlx::QueryBuilder<'args, DB>
+where
+    i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    String: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    Option<String>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+{
+    let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+    where_input.build_where(&mut qb);
+    qb
+}
+fn build_delete_many_query<'args, DB: sqlx::Database>(
+    base_sql: &str,
+    where_input: &filter::ProfileWhereInput,
+) -> sqlx::QueryBuilder<'args, DB>
+where
+    i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    String: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    Option<String>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+{
+    let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+    where_input.build_where(&mut qb);
+    qb
+}
 pub struct FindUniqueQuery<'a> {
     client: &'a DatabaseClient,
     r#where: filter::ProfileWhereUniqueInput,
 }
 impl<'a> FindUniqueQuery<'a> {
     pub async fn exec(self) -> Result<Option<Profile>, OrmxError> {
-        let mut qb = sqlx::QueryBuilder::<
-            sqlx::Postgres,
-        >::new("SELECT * FROM \"profiles\" WHERE 1=1");
-        self.r#where.build_where(&mut qb);
-        qb.push(" LIMIT 1");
-        self.client.fetch_optional_pg(qb).await
+        match self.client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_unique_select_query::<
+                    sqlx::Postgres,
+                >("SELECT * FROM \"profiles\" WHERE 1=1", &self.r#where);
+                self.client.fetch_optional_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_unique_select_query::<
+                    sqlx::Sqlite,
+                >("SELECT * FROM \"profiles\" WHERE 1=1", &self.r#where);
+                self.client.fetch_optional_sqlite(qb).await
+            }
+        }
     }
 }
 pub struct FindFirstQuery<'a> {
@@ -345,13 +446,32 @@ impl<'a> FindFirstQuery<'a> {
         self
     }
     pub async fn exec(self) -> Result<Option<Profile>, OrmxError> {
-        let mut qb = sqlx::QueryBuilder::<
-            sqlx::Postgres,
-        >::new("SELECT * FROM \"profiles\" WHERE 1=1");
-        self.r#where.build_where(&mut qb);
-        build_order_by(&self.order_by, &mut qb);
-        qb.push(" LIMIT 1");
-        self.client.fetch_optional_pg(qb).await
+        match self.client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_select_query::<
+                    sqlx::Postgres,
+                >(
+                    "SELECT * FROM \"profiles\" WHERE 1=1",
+                    &self.r#where,
+                    &self.order_by,
+                    Some(1),
+                    None,
+                );
+                self.client.fetch_optional_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_select_query::<
+                    sqlx::Sqlite,
+                >(
+                    "SELECT * FROM \"profiles\" WHERE 1=1",
+                    &self.r#where,
+                    &self.order_by,
+                    Some(1),
+                    None,
+                );
+                self.client.fetch_optional_sqlite(qb).await
+            }
+        }
     }
 }
 pub struct FindManyQuery<'a> {
@@ -375,20 +495,32 @@ impl<'a> FindManyQuery<'a> {
         self
     }
     pub async fn exec(self) -> Result<Vec<Profile>, OrmxError> {
-        let mut qb = sqlx::QueryBuilder::<
-            sqlx::Postgres,
-        >::new("SELECT * FROM \"profiles\" WHERE 1=1");
-        self.r#where.build_where(&mut qb);
-        build_order_by(&self.order_by, &mut qb);
-        if let Some(take) = self.take {
-            qb.push(" LIMIT ");
-            qb.push_bind(take);
+        match self.client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_select_query::<
+                    sqlx::Postgres,
+                >(
+                    "SELECT * FROM \"profiles\" WHERE 1=1",
+                    &self.r#where,
+                    &self.order_by,
+                    self.take,
+                    self.skip,
+                );
+                self.client.fetch_all_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_select_query::<
+                    sqlx::Sqlite,
+                >(
+                    "SELECT * FROM \"profiles\" WHERE 1=1",
+                    &self.r#where,
+                    &self.order_by,
+                    self.take,
+                    self.skip,
+                );
+                self.client.fetch_all_sqlite(qb).await
+            }
         }
-        if let Some(skip) = self.skip {
-            qb.push(" OFFSET ");
-            qb.push_bind(skip);
-        }
-        self.client.fetch_all_pg(qb).await
     }
 }
 pub struct CreateQuery<'a> {
@@ -398,32 +530,30 @@ pub struct CreateQuery<'a> {
 impl<'a> CreateQuery<'a> {
     pub async fn exec(self) -> Result<Profile, OrmxError> {
         let client = self.client;
-        let mut cols: Vec<&str> = Vec::new();
-        cols.push("bio");
-        cols.push("avatar");
-        cols.push("user_id");
-        cols.push("id");
-        let mut qb = sqlx::QueryBuilder::new("INSERT INTO \"profiles\"");
-        qb.push(" (");
-        for (i, col) in cols.iter().enumerate() {
-            if i > 0 {
-                qb.push(", ");
+        macro_rules! build_insert {
+            ($qb_type:ty) => {
+                { let mut cols : Vec < & str > = Vec::new(); cols.push("bio"); cols
+                .push("avatar"); cols.push("user_id"); cols.push("id"); let mut qb =
+                sqlx::QueryBuilder:: < $qb_type > ::new("INSERT INTO \"profiles\""); qb
+                .push(" ("); for (i, col) in cols.iter().enumerate() { if i > 0 { qb
+                .push(", "); } qb.push("\""); qb.push(* col); qb.push("\""); } qb
+                .push(") VALUES ("); { let mut sep = qb.separated(", "); sep
+                .push_bind(self.data.bio); sep.push_bind(self.data.avatar); sep
+                .push_bind(self.data.user_id); let val = self.data.id.unwrap_or_else(||
+                uuid::Uuid::new_v4().to_string()); sep.push_bind(val); } qb
+                .push(") RETURNING *"); qb }
+            };
+        }
+        match client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_insert!(sqlx::Postgres);
+                client.fetch_one_pg(qb).await
             }
-            qb.push("\"");
-            qb.push(*col);
-            qb.push("\"");
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_insert!(sqlx::Sqlite);
+                client.fetch_one_sqlite(qb).await
+            }
         }
-        qb.push(") VALUES (");
-        {
-            let mut sep = qb.separated(", ");
-            sep.push_bind(self.data.bio);
-            sep.push_bind(self.data.avatar);
-            sep.push_bind(self.data.user_id);
-            let val = self.data.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            sep.push_bind(val);
-        }
-        qb.push(") RETURNING *");
-        client.fetch_one_pg(qb).await
     }
 }
 pub struct UpdateQuery<'a> {
@@ -434,39 +564,32 @@ pub struct UpdateQuery<'a> {
 impl<'a> UpdateQuery<'a> {
     pub async fn exec(self) -> Result<Profile, OrmxError> {
         let client = self.client;
-        let mut qb = sqlx::QueryBuilder::new("UPDATE \"profiles\" SET ");
-        let mut first_set = true;
-        if let Some(SetValue::Set(v)) = self.data.bio {
-            if !first_set {
-                qb.push(", ");
+        macro_rules! build_update {
+            ($qb_type:ty) => {
+                { let mut qb = sqlx::QueryBuilder:: < $qb_type >
+                ::new("UPDATE \"profiles\" SET "); let mut first_set = true; if let
+                Some(SetValue::Set(v)) = self.data.bio { if ! first_set { qb.push(", ");
+                } first_set = false; qb.push(concat!("\"", "bio", "\" = ")); qb
+                .push_bind(v); } if let Some(SetValue::Set(v)) = self.data.avatar { if !
+                first_set { qb.push(", "); } first_set = false; qb.push(concat!("\"",
+                "avatar", "\" = ")); qb.push_bind(v); } if let Some(SetValue::Set(v)) =
+                self.data.user_id { if ! first_set { qb.push(", "); } first_set = false;
+                qb.push(concat!("\"", "user_id", "\" = ")); qb.push_bind(v); } if
+                first_set { return Err(OrmxError::Query("No fields to update".into())); }
+                qb.push(" WHERE 1=1"); self.r#where.build_where(& mut qb); qb
+                .push(" RETURNING *"); qb }
+            };
+        }
+        match client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_update!(sqlx::Postgres);
+                client.fetch_one_pg(qb).await
             }
-            first_set = false;
-            qb.push(concat!("\"", "bio", "\" = "));
-            qb.push_bind(v);
-        }
-        if let Some(SetValue::Set(v)) = self.data.avatar {
-            if !first_set {
-                qb.push(", ");
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_update!(sqlx::Sqlite);
+                client.fetch_one_sqlite(qb).await
             }
-            first_set = false;
-            qb.push(concat!("\"", "avatar", "\" = "));
-            qb.push_bind(v);
         }
-        if let Some(SetValue::Set(v)) = self.data.user_id {
-            if !first_set {
-                qb.push(", ");
-            }
-            first_set = false;
-            qb.push(concat!("\"", "user_id", "\" = "));
-            qb.push_bind(v);
-        }
-        if first_set {
-            return Err(OrmxError::Query("No fields to update".into()));
-        }
-        qb.push(" WHERE 1=1");
-        self.r#where.build_where(&mut qb);
-        qb.push(" RETURNING *");
-        client.fetch_one_pg(qb).await
     }
 }
 pub struct DeleteQuery<'a> {
@@ -475,12 +598,20 @@ pub struct DeleteQuery<'a> {
 }
 impl<'a> DeleteQuery<'a> {
     pub async fn exec(self) -> Result<Profile, OrmxError> {
-        let mut qb = sqlx::QueryBuilder::<
-            sqlx::Postgres,
-        >::new("DELETE FROM \"profiles\" WHERE 1=1");
-        self.r#where.build_where(&mut qb);
-        qb.push(" RETURNING *");
-        self.client.fetch_one_pg(qb).await
+        match self.client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_delete_query::<
+                    sqlx::Postgres,
+                >("DELETE FROM \"profiles\" WHERE 1=1", &self.r#where);
+                self.client.fetch_one_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_delete_query::<
+                    sqlx::Sqlite,
+                >("DELETE FROM \"profiles\" WHERE 1=1", &self.r#where);
+                self.client.fetch_one_sqlite(qb).await
+            }
+        }
     }
 }
 #[derive(sqlx::FromRow)]
@@ -493,11 +624,26 @@ pub struct CountQuery<'a> {
 }
 impl<'a> CountQuery<'a> {
     pub async fn exec(self) -> Result<i64, OrmxError> {
-        let mut qb = sqlx::QueryBuilder::<
-            sqlx::Postgres,
-        >::new("SELECT COUNT(*) as \"count\" FROM \"profiles\" WHERE 1=1");
-        self.r#where.build_where(&mut qb);
-        let row: CountResult = self.client.fetch_one_pg(qb).await?;
+        let row: CountResult = match self.client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_count_query::<
+                    sqlx::Postgres,
+                >(
+                    "SELECT COUNT(*) as \"count\" FROM \"profiles\" WHERE 1=1",
+                    &self.r#where,
+                );
+                self.client.fetch_one_pg(qb).await?
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_count_query::<
+                    sqlx::Sqlite,
+                >(
+                    "SELECT COUNT(*) as \"count\" FROM \"profiles\" WHERE 1=1",
+                    &self.r#where,
+                );
+                self.client.fetch_one_sqlite(qb).await?
+            }
+        };
         Ok(row.count)
     }
 }
@@ -547,24 +693,19 @@ pub struct DeleteManyQuery<'a> {
 }
 impl<'a> DeleteManyQuery<'a> {
     pub async fn exec(self) -> Result<u64, OrmxError> {
-        let mut qb = sqlx::QueryBuilder::<
-            sqlx::Postgres,
-        >::new("DELETE FROM \"profiles\" WHERE 1=1");
-        self.r#where.build_where(&mut qb);
-        self.client.execute_pg(qb).await
-    }
-}
-fn build_order_by(
-    orders: &[order::ProfileOrderByInput],
-    qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
-) {
-    if !orders.is_empty() {
-        qb.push(" ORDER BY ");
-        for (i, ob) in orders.iter().enumerate() {
-            if i > 0 {
-                qb.push(", ");
+        match self.client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_delete_many_query::<
+                    sqlx::Postgres,
+                >("DELETE FROM \"profiles\" WHERE 1=1", &self.r#where);
+                self.client.execute_pg(qb).await
             }
-            ob.build_order_by(qb);
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_delete_many_query::<
+                    sqlx::Sqlite,
+                >("DELETE FROM \"profiles\" WHERE 1=1", &self.r#where);
+                self.client.execute_sqlite(qb).await
+            }
         }
     }
 }

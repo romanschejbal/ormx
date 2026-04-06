@@ -1,8 +1,13 @@
 //! Migration runner: orchestrates creating, applying, and managing migrations.
 
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
+
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
-use std::path::{Path, PathBuf};
+
+#[cfg(feature = "sqlite")]
+use sqlx::SqlitePool;
 
 use crate::{diff, shadow, snapshot, sql, state};
 
@@ -52,7 +57,7 @@ impl MigrationRunner {
         &self,
         current_schema: &ormx_core::schema::Schema,
         name: &str,
-        database_url: Option<&str>,
+        #[allow(unused_variables)] database_url: Option<&str>,
     ) -> Result<Option<PathBuf>, MigrateError> {
         std::fs::create_dir_all(&self.migrations_dir)
             .map_err(|e| MigrateError::Io(format!("Failed to create migrations dir: {e}")))?;
@@ -60,19 +65,37 @@ impl MigrationRunner {
         // Determine the "applied state" based on strategy
         let previous = match self.strategy {
             MigrationStrategy::ShadowDatabase => {
-                let url = database_url.ok_or_else(|| {
-                    MigrateError::Io("Shadow database strategy requires a database URL".to_string())
-                })?;
-
                 let has_migrations = self
                     .list_migrations()?
                     .iter()
                     .any(|m| m.join("migration.sql").exists());
 
                 if has_migrations {
-                    shadow::introspect_via_shadow(url, &self.migrations_dir)
-                        .await
-                        .map_err(|e| MigrateError::Database(e.to_string()))?
+                    match self.provider {
+                        #[cfg(feature = "postgres")]
+                        ormx_core::types::DatabaseProvider::PostgreSQL => {
+                            let url = database_url.ok_or_else(|| {
+                                MigrateError::Io(
+                                    "Shadow database strategy requires a database URL".to_string(),
+                                )
+                            })?;
+                            shadow::introspect_via_shadow(url, &self.migrations_dir)
+                                .await
+                                .map_err(|e| MigrateError::Database(e.to_string()))?
+                        }
+                        #[cfg(feature = "sqlite")]
+                        ormx_core::types::DatabaseProvider::SQLite => {
+                            shadow::introspect_via_shadow_sqlite(&self.migrations_dir)
+                                .await
+                                .map_err(|e| MigrateError::Database(e.to_string()))?
+                        }
+                        _ => {
+                            return Err(MigrateError::Io(format!(
+                                "Shadow database not supported for provider {:?}",
+                                self.provider
+                            )));
+                        }
+                    }
                 } else {
                     snapshot::empty_schema(self.provider)
                 }
@@ -113,7 +136,8 @@ impl MigrationRunner {
         Ok(Some(migration_dir))
     }
 
-    /// Apply all pending migrations to the database.
+    /// Apply all pending migrations to the database (PostgreSQL).
+    #[cfg(feature = "postgres")]
     pub async fn apply_pending(&self, pool: &PgPool) -> Result<Vec<String>, MigrateError> {
         state::ensure_table(pool)
             .await
@@ -174,7 +198,81 @@ impl MigrationRunner {
         Ok(applied_new)
     }
 
-    /// Get the status of all migrations.
+    /// Apply all pending migrations to the database (SQLite).
+    #[cfg(feature = "sqlite")]
+    pub async fn apply_pending_sqlite(
+        &self,
+        pool: &SqlitePool,
+    ) -> Result<Vec<String>, MigrateError> {
+        state::ensure_table_sqlite(pool)
+            .await
+            .map_err(|e| MigrateError::Database(e.to_string()))?;
+
+        let applied = state::get_applied_sqlite(pool)
+            .await
+            .map_err(|e| MigrateError::Database(e.to_string()))?;
+
+        let applied_names: std::collections::HashSet<String> =
+            applied.iter().map(|m| m.name.clone()).collect();
+
+        let pending = self.list_migrations()?;
+        let mut applied_new = Vec::new();
+
+        for migration in pending {
+            let name = migration.file_name().unwrap().to_string_lossy().to_string();
+
+            if applied_names.contains(&name) {
+                // Verify checksum
+                let sql_path = migration.join("migration.sql");
+                let sql = std::fs::read_to_string(&sql_path).map_err(|e| {
+                    MigrateError::Io(format!("Failed to read {}: {e}", sql_path.display()))
+                })?;
+                let checksum = compute_checksum(&sql);
+
+                if let Some(existing) = applied.iter().find(|m| m.name == name) {
+                    if existing.checksum != checksum {
+                        return Err(MigrateError::ChecksumMismatch {
+                            migration: name,
+                            expected: existing.checksum.clone(),
+                            actual: checksum,
+                        });
+                    }
+                }
+                continue;
+            }
+
+            // Apply this migration
+            let sql_path = migration.join("migration.sql");
+            let sql = std::fs::read_to_string(&sql_path).map_err(|e| {
+                MigrateError::Io(format!("Failed to read {}: {e}", sql_path.display()))
+            })?;
+            let checksum = compute_checksum(&sql);
+
+            // Enable foreign keys before applying
+            sqlx::query("PRAGMA foreign_keys = ON;")
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    MigrateError::Database(format!("Failed to enable foreign keys: {e}"))
+                })?;
+
+            sqlx::query(&sql)
+                .execute(pool)
+                .await
+                .map_err(|e| MigrateError::Database(format!("Migration '{name}' failed: {e}")))?;
+
+            state::mark_applied_sqlite(pool, &name, &checksum)
+                .await
+                .map_err(|e| MigrateError::Database(e.to_string()))?;
+
+            applied_new.push(name);
+        }
+
+        Ok(applied_new)
+    }
+
+    /// Get the status of all migrations (PostgreSQL).
+    #[cfg(feature = "postgres")]
     pub async fn status(&self, pool: &PgPool) -> Result<Vec<MigrationStatus>, MigrateError> {
         state::ensure_table(pool)
             .await
@@ -184,6 +282,31 @@ impl MigrationRunner {
             .await
             .map_err(|e| MigrateError::Database(e.to_string()))?;
 
+        self.build_status_list(&applied)
+    }
+
+    /// Get the status of all migrations (SQLite).
+    #[cfg(feature = "sqlite")]
+    pub async fn status_sqlite(
+        &self,
+        pool: &SqlitePool,
+    ) -> Result<Vec<MigrationStatus>, MigrateError> {
+        state::ensure_table_sqlite(pool)
+            .await
+            .map_err(|e| MigrateError::Database(e.to_string()))?;
+
+        let applied = state::get_applied_sqlite(pool)
+            .await
+            .map_err(|e| MigrateError::Database(e.to_string()))?;
+
+        self.build_status_list(&applied)
+    }
+
+    /// Build status list from applied migrations (shared implementation).
+    fn build_status_list(
+        &self,
+        applied: &[state::AppliedMigration],
+    ) -> Result<Vec<MigrationStatus>, MigrateError> {
         let applied_map: std::collections::HashMap<String, &state::AppliedMigration> =
             applied.iter().map(|m| (m.name.clone(), m)).collect();
 

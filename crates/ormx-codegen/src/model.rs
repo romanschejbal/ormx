@@ -483,7 +483,7 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
     let _create_input = format_ident!("{}CreateInput", model.name);
     let _update_input = format_ident!("{}UpdateInput", model.name);
     let order_by = format_ident!("{}OrderByInput", model.name);
-    let _db_bounds = collect_db_bounds(scalar_fields);
+    let db_bounds = collect_db_bounds(scalar_fields);
 
     let select_sql = format!(r#"SELECT * FROM "{}" WHERE 1=1"#, table_name);
     let count_sql = format!(
@@ -496,6 +496,99 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
     let update_code = gen_update_code(model, scalar_fields, table_name);
 
     quote! {
+        // ── Generic helper: build ORDER BY clause ──────────────
+        fn build_order_by<'args, DB: sqlx::Database>(
+            orders: &[order::#order_by],
+            qb: &mut sqlx::QueryBuilder<'args, DB>,
+        ) {
+            if !orders.is_empty() {
+                qb.push(" ORDER BY ");
+                for (i, ob) in orders.iter().enumerate() {
+                    if i > 0 { qb.push(", "); }
+                    ob.build_order_by(qb);
+                }
+            }
+        }
+
+        // ── Generic helper: build a SELECT query ───────────────
+        fn build_select_query<'args, DB: sqlx::Database>(
+            base_sql: &str,
+            where_input: &filter::#_where_input,
+            orders: &[order::#order_by],
+            take: Option<i64>,
+            skip: Option<i64>,
+        ) -> sqlx::QueryBuilder<'args, DB>
+        where
+            #(#db_bounds,)*
+        {
+            let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+            where_input.build_where(&mut qb);
+            build_order_by(orders, &mut qb);
+            if let Some(take) = take {
+                qb.push(" LIMIT ");
+                qb.push_bind(take);
+            }
+            if let Some(skip) = skip {
+                qb.push(" OFFSET ");
+                qb.push_bind(skip);
+            }
+            qb
+        }
+
+        // ── Generic helper: build a SELECT query for unique lookup ──
+        fn build_unique_select_query<'args, DB: sqlx::Database>(
+            base_sql: &str,
+            where_unique: &filter::#_where_unique,
+        ) -> sqlx::QueryBuilder<'args, DB>
+        where
+            #(#db_bounds,)*
+        {
+            let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+            where_unique.build_where(&mut qb);
+            qb.push(" LIMIT 1");
+            qb
+        }
+
+        // ── Generic helper: build a DELETE-returning query ─────
+        fn build_delete_query<'args, DB: sqlx::Database>(
+            base_sql: &str,
+            where_unique: &filter::#_where_unique,
+        ) -> sqlx::QueryBuilder<'args, DB>
+        where
+            #(#db_bounds,)*
+        {
+            let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+            where_unique.build_where(&mut qb);
+            qb.push(" RETURNING *");
+            qb
+        }
+
+        // ── Generic helper: build a COUNT query ────────────────
+        fn build_count_query<'args, DB: sqlx::Database>(
+            base_sql: &str,
+            where_input: &filter::#_where_input,
+        ) -> sqlx::QueryBuilder<'args, DB>
+        where
+            #(#db_bounds,)*
+        {
+            let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+            where_input.build_where(&mut qb);
+            qb
+        }
+
+        // ── Generic helper: build a DELETE-many query ──────────
+        fn build_delete_many_query<'args, DB: sqlx::Database>(
+            base_sql: &str,
+            where_input: &filter::#_where_input,
+        ) -> sqlx::QueryBuilder<'args, DB>
+        where
+            #(#db_bounds,)*
+        {
+            let mut qb = sqlx::QueryBuilder::<DB>::new(base_sql);
+            where_input.build_where(&mut qb);
+            qb
+        }
+
         pub struct FindUniqueQuery<'a> {
             client: &'a DatabaseClient,
             r#where: filter::#_where_unique,
@@ -503,10 +596,16 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
 
         impl<'a> FindUniqueQuery<'a> {
             pub async fn exec(self) -> Result<Option<#model_ident>, OrmxError> {
-                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#select_sql);
-                self.r#where.build_where(&mut qb);
-                qb.push(" LIMIT 1");
-                self.client.fetch_optional_pg(qb).await
+                match self.client {
+                    DatabaseClient::Postgres(_) => {
+                        let qb = build_unique_select_query::<sqlx::Postgres>(#select_sql, &self.r#where);
+                        self.client.fetch_optional_pg(qb).await
+                    }
+                    DatabaseClient::Sqlite(_) => {
+                        let qb = build_unique_select_query::<sqlx::Sqlite>(#select_sql, &self.r#where);
+                        self.client.fetch_optional_sqlite(qb).await
+                    }
+                }
             }
         }
 
@@ -523,11 +622,16 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
             }
 
             pub async fn exec(self) -> Result<Option<#model_ident>, OrmxError> {
-                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#select_sql);
-                self.r#where.build_where(&mut qb);
-                build_order_by(&self.order_by, &mut qb);
-                qb.push(" LIMIT 1");
-                self.client.fetch_optional_pg(qb).await
+                match self.client {
+                    DatabaseClient::Postgres(_) => {
+                        let qb = build_select_query::<sqlx::Postgres>(#select_sql, &self.r#where, &self.order_by, Some(1), None);
+                        self.client.fetch_optional_pg(qb).await
+                    }
+                    DatabaseClient::Sqlite(_) => {
+                        let qb = build_select_query::<sqlx::Sqlite>(#select_sql, &self.r#where, &self.order_by, Some(1), None);
+                        self.client.fetch_optional_sqlite(qb).await
+                    }
+                }
             }
         }
 
@@ -556,18 +660,16 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
             }
 
             pub async fn exec(self) -> Result<Vec<#model_ident>, OrmxError> {
-                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#select_sql);
-                self.r#where.build_where(&mut qb);
-                build_order_by(&self.order_by, &mut qb);
-                if let Some(take) = self.take {
-                    qb.push(" LIMIT ");
-                    qb.push_bind(take);
+                match self.client {
+                    DatabaseClient::Postgres(_) => {
+                        let qb = build_select_query::<sqlx::Postgres>(#select_sql, &self.r#where, &self.order_by, self.take, self.skip);
+                        self.client.fetch_all_pg(qb).await
+                    }
+                    DatabaseClient::Sqlite(_) => {
+                        let qb = build_select_query::<sqlx::Sqlite>(#select_sql, &self.r#where, &self.order_by, self.take, self.skip);
+                        self.client.fetch_all_sqlite(qb).await
+                    }
                 }
-                if let Some(skip) = self.skip {
-                    qb.push(" OFFSET ");
-                    qb.push_bind(skip);
-                }
-                self.client.fetch_all_pg(qb).await
             }
         }
 
@@ -603,10 +705,16 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
 
         impl<'a> DeleteQuery<'a> {
             pub async fn exec(self) -> Result<#model_ident, OrmxError> {
-                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#delete_sql);
-                self.r#where.build_where(&mut qb);
-                qb.push(" RETURNING *");
-                self.client.fetch_one_pg(qb).await
+                match self.client {
+                    DatabaseClient::Postgres(_) => {
+                        let qb = build_delete_query::<sqlx::Postgres>(#delete_sql, &self.r#where);
+                        self.client.fetch_one_pg(qb).await
+                    }
+                    DatabaseClient::Sqlite(_) => {
+                        let qb = build_delete_query::<sqlx::Sqlite>(#delete_sql, &self.r#where);
+                        self.client.fetch_one_sqlite(qb).await
+                    }
+                }
             }
         }
 
@@ -620,9 +728,16 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
 
         impl<'a> CountQuery<'a> {
             pub async fn exec(self) -> Result<i64, OrmxError> {
-                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#count_sql);
-                self.r#where.build_where(&mut qb);
-                let row: CountResult = self.client.fetch_one_pg(qb).await?;
+                let row: CountResult = match self.client {
+                    DatabaseClient::Postgres(_) => {
+                        let qb = build_count_query::<sqlx::Postgres>(#count_sql, &self.r#where);
+                        self.client.fetch_one_pg(qb).await?
+                    }
+                    DatabaseClient::Sqlite(_) => {
+                        let qb = build_count_query::<sqlx::Sqlite>(#count_sql, &self.r#where);
+                        self.client.fetch_one_sqlite(qb).await?
+                    }
+                };
                 Ok(row.count)
             }
         }
@@ -667,21 +782,15 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
 
         impl<'a> DeleteManyQuery<'a> {
             pub async fn exec(self) -> Result<u64, OrmxError> {
-                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(#delete_sql);
-                self.r#where.build_where(&mut qb);
-                self.client.execute_pg(qb).await
-            }
-        }
-
-        fn build_order_by(
-            orders: &[order::#order_by],
-            qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
-        ) {
-            if !orders.is_empty() {
-                qb.push(" ORDER BY ");
-                for (i, ob) in orders.iter().enumerate() {
-                    if i > 0 { qb.push(", "); }
-                    ob.build_order_by(qb);
+                match self.client {
+                    DatabaseClient::Postgres(_) => {
+                        let qb = build_delete_many_query::<sqlx::Postgres>(#delete_sql, &self.r#where);
+                        self.client.execute_pg(qb).await
+                    }
+                    DatabaseClient::Sqlite(_) => {
+                        let qb = build_delete_many_query::<sqlx::Sqlite>(#delete_sql, &self.r#where);
+                        self.client.execute_sqlite(qb).await
+                    }
                 }
             }
         }
@@ -748,26 +857,43 @@ fn gen_insert_code(model: &Model, scalar_fields: &[&Field], table_name: &str) ->
 
     let insert_start = format!(r#"INSERT INTO "{}""#, table_name);
 
+    // The insert_body macro avoids duplicating the column/value building logic
+    // for each database backend. It captures `self` by reference.
     quote! {
-        let mut cols: Vec<&str> = Vec::new();
-        #(#col_pushes)*
+        // Helper to build the INSERT query for any DB backend
+        macro_rules! build_insert {
+            ($qb_type:ty) => {{
+                let mut cols: Vec<&str> = Vec::new();
+                #(#col_pushes)*
 
-        let mut qb = sqlx::QueryBuilder::new(#insert_start);
-        qb.push(" (");
-        for (i, col) in cols.iter().enumerate() {
-            if i > 0 { qb.push(", "); }
-            qb.push("\"");
-            qb.push(*col);
-            qb.push("\"");
+                let mut qb = sqlx::QueryBuilder::<$qb_type>::new(#insert_start);
+                qb.push(" (");
+                for (i, col) in cols.iter().enumerate() {
+                    if i > 0 { qb.push(", "); }
+                    qb.push("\"");
+                    qb.push(*col);
+                    qb.push("\"");
+                }
+                qb.push(") VALUES (");
+                {
+                    let mut sep = qb.separated(", ");
+                    #(#val_pushes)*
+                }
+                qb.push(") RETURNING *");
+                qb
+            }};
         }
-        qb.push(") VALUES (");
-        {
-            let mut sep = qb.separated(", ");
-            #(#val_pushes)*
-        }
-        qb.push(") RETURNING *");
 
-        client.fetch_one_pg(qb).await
+        match client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_insert!(sqlx::Postgres);
+                client.fetch_one_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_insert!(sqlx::Sqlite);
+                client.fetch_one_sqlite(qb).await
+            }
+        }
     }
 }
 
@@ -853,21 +979,37 @@ fn gen_update_code(model: &Model, scalar_fields: &[&Field], table_name: &str) ->
         })
         .collect();
 
+    // The build_update macro avoids duplicating the SET clause building logic
+    // for each database backend.
     quote! {
-        let mut qb = sqlx::QueryBuilder::new(#update_start);
-        let mut first_set = true;
-        #(#set_arms)*
-        #(#updated_at_arms)*
+        macro_rules! build_update {
+            ($qb_type:ty) => {{
+                let mut qb = sqlx::QueryBuilder::<$qb_type>::new(#update_start);
+                let mut first_set = true;
+                #(#set_arms)*
+                #(#updated_at_arms)*
 
-        if first_set {
-            return Err(OrmxError::Query("No fields to update".into()));
+                if first_set {
+                    return Err(OrmxError::Query("No fields to update".into()));
+                }
+
+                qb.push(" WHERE 1=1");
+                self.r#where.build_where(&mut qb);
+                qb.push(" RETURNING *");
+                qb
+            }};
         }
 
-        qb.push(" WHERE 1=1");
-        self.r#where.build_where(&mut qb);
-        qb.push(" RETURNING *");
-
-        client.fetch_one_pg(qb).await
+        match client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_update!(sqlx::Postgres);
+                client.fetch_one_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_update!(sqlx::Sqlite);
+                client.fetch_one_sqlite(qb).await
+            }
+        }
     }
 }
 

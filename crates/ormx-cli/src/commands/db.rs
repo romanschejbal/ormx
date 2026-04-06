@@ -1,3 +1,4 @@
+use ormx_core::types::DatabaseProvider;
 use std::path::Path;
 
 /// Introspect a live database and generate a schema.ormx file from it.
@@ -11,16 +12,31 @@ pub async fn pull(schema_path: &str) -> miette::Result<()> {
     let url = super::migrate::resolve_url(&schema.datasource.url)?;
 
     println!("Connecting to database...");
-    let pool = sqlx::PgPool::connect(&url)
-        .await
-        .map_err(|e| miette::miette!("Failed to connect: {e}"))?;
-
-    println!("Introspecting database...");
-    let db_schema = ormx_migrate::introspect::introspect_postgres(&pool, "public")
-        .await
-        .map_err(|e| miette::miette!("Introspection failed: {e}"))?;
-
-    pool.close().await;
+    let db_schema = match schema.datasource.provider {
+        DatabaseProvider::PostgreSQL => {
+            let pool = sqlx::PgPool::connect(&url)
+                .await
+                .map_err(|e| miette::miette!("Failed to connect: {e}"))?;
+            println!("Introspecting PostgreSQL database...");
+            let s = ormx_migrate::introspect::introspect_postgres(&pool, "public")
+                .await
+                .map_err(|e| miette::miette!("Introspection failed: {e}"))?;
+            pool.close().await;
+            s
+        }
+        DatabaseProvider::SQLite => {
+            let pool = sqlx::SqlitePool::connect(&url)
+                .await
+                .map_err(|e| miette::miette!("Failed to connect: {e}"))?;
+            println!("Introspecting SQLite database...");
+            let s = ormx_migrate::introspect::introspect_sqlite(&pool)
+                .await
+                .map_err(|e| miette::miette!("Introspection failed: {e}"))?;
+            pool.close().await;
+            s
+        }
+        _ => return Err(miette::miette!("Unsupported database provider")),
+    };
 
     // Generate .ormx schema text from introspected schema
     let schema_text = schema_to_ormx(&db_schema, &schema.datasource.url);

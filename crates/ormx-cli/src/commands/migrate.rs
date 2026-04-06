@@ -1,3 +1,4 @@
+use ormx_core::types::DatabaseProvider;
 use ormx_migrate::MigrationStrategy;
 use std::path::Path;
 
@@ -34,20 +35,8 @@ pub async fn dev(schema_path: &str, name: Option<&str>, use_snapshot: bool) -> m
                 dir.file_name().unwrap().to_string_lossy()
             );
 
-            let pool = sqlx::PgPool::connect(&url)
-                .await
-                .map_err(|e| miette::miette!("Failed to connect to database: {e}"))?;
-
-            let applied = runner
-                .apply_pending(&pool)
-                .await
-                .map_err(|e| miette::miette!("Failed to apply migration: {e}"))?;
-
-            for name in &applied {
-                println!("Applied: {name}");
-            }
-
-            pool.close().await;
+            // Apply the migration
+            apply_pending(&runner, &url, schema.datasource.provider).await?;
 
             println!("Regenerating client...");
             super::generate::run(schema_path).await?;
@@ -71,32 +60,15 @@ pub async fn deploy(schema_path: &str) -> miette::Result<()> {
         .map_err(|e| miette::miette!("Schema error: {e}"))?;
 
     let url = resolve_url(&schema.datasource.url)?;
-    let pool = sqlx::PgPool::connect(&url)
-        .await
-        .map_err(|e| miette::miette!("Failed to connect to database: {e}"))?;
-
     let migrations_dir = Path::new("migrations").to_path_buf();
     let runner = ormx_migrate::MigrationRunner::new(
         migrations_dir,
         schema.datasource.provider,
-        MigrationStrategy::Snapshot, // deploy doesn't need shadow DB
+        MigrationStrategy::Snapshot,
     );
 
-    let applied = runner
-        .apply_pending(&pool)
-        .await
-        .map_err(|e| miette::miette!("Failed to apply migrations: {e}"))?;
+    apply_pending(&runner, &url, schema.datasource.provider).await?;
 
-    if applied.is_empty() {
-        println!("All migrations already applied.");
-    } else {
-        for name in &applied {
-            println!("Applied: {name}");
-        }
-        println!("Applied {} migration(s).", applied.len());
-    }
-
-    pool.close().await;
     Ok(())
 }
 
@@ -108,10 +80,6 @@ pub async fn status(schema_path: &str) -> miette::Result<()> {
         .map_err(|e| miette::miette!("Schema error: {e}"))?;
 
     let url = resolve_url(&schema.datasource.url)?;
-    let pool = sqlx::PgPool::connect(&url)
-        .await
-        .map_err(|e| miette::miette!("Failed to connect to database: {e}"))?;
-
     let migrations_dir = Path::new("migrations").to_path_buf();
     let runner = ormx_migrate::MigrationRunner::new(
         migrations_dir,
@@ -119,10 +87,31 @@ pub async fn status(schema_path: &str) -> miette::Result<()> {
         MigrationStrategy::Snapshot,
     );
 
-    let statuses = runner
-        .status(&pool)
-        .await
-        .map_err(|e| miette::miette!("Failed to get status: {e}"))?;
+    let statuses = match schema.datasource.provider {
+        DatabaseProvider::PostgreSQL => {
+            let pool = sqlx::PgPool::connect(&url)
+                .await
+                .map_err(|e| miette::miette!("Failed to connect: {e}"))?;
+            let s = runner
+                .status(&pool)
+                .await
+                .map_err(|e| miette::miette!("Failed to get status: {e}"))?;
+            pool.close().await;
+            s
+        }
+        DatabaseProvider::SQLite => {
+            let pool = sqlx::SqlitePool::connect(&url)
+                .await
+                .map_err(|e| miette::miette!("Failed to connect: {e}"))?;
+            let s = runner
+                .status_sqlite(&pool)
+                .await
+                .map_err(|e| miette::miette!("Failed to get status: {e}"))?;
+            pool.close().await;
+            s
+        }
+        _ => return Err(miette::miette!("Unsupported database provider")),
+    };
 
     if statuses.is_empty() {
         println!("No migrations found.");
@@ -137,7 +126,49 @@ pub async fn status(schema_path: &str) -> miette::Result<()> {
         }
     }
 
-    pool.close().await;
+    Ok(())
+}
+
+async fn apply_pending(
+    runner: &ormx_migrate::MigrationRunner,
+    url: &str,
+    provider: DatabaseProvider,
+) -> miette::Result<()> {
+    let applied = match provider {
+        DatabaseProvider::PostgreSQL => {
+            let pool = sqlx::PgPool::connect(url)
+                .await
+                .map_err(|e| miette::miette!("Failed to connect: {e}"))?;
+            let a = runner
+                .apply_pending(&pool)
+                .await
+                .map_err(|e| miette::miette!("Failed to apply migration: {e}"))?;
+            pool.close().await;
+            a
+        }
+        DatabaseProvider::SQLite => {
+            let pool = sqlx::SqlitePool::connect(url)
+                .await
+                .map_err(|e| miette::miette!("Failed to connect: {e}"))?;
+            let a = runner
+                .apply_pending_sqlite(&pool)
+                .await
+                .map_err(|e| miette::miette!("Failed to apply migration: {e}"))?;
+            pool.close().await;
+            a
+        }
+        _ => return Err(miette::miette!("Unsupported database provider")),
+    };
+
+    if applied.is_empty() {
+        println!("All migrations already applied.");
+    } else {
+        for name in &applied {
+            println!("Applied: {name}");
+        }
+        println!("Applied {} migration(s).", applied.len());
+    }
+
     Ok(())
 }
 

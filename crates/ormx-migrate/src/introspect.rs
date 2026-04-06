@@ -4,9 +4,15 @@
 use ormx_core::ast::{DefaultValue, LiteralValue, ReferentialAction};
 use ormx_core::schema::*;
 use ormx_core::types::{DatabaseProvider, ScalarType};
+
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
 
+#[cfg(feature = "sqlite")]
+use sqlx::SqlitePool;
+
 /// Introspect a PostgreSQL database and produce a Schema IR.
+#[cfg(feature = "postgres")]
 pub async fn introspect_postgres(pool: &PgPool, schema_name: &str) -> Result<Schema, sqlx::Error> {
     let enums = introspect_enums(pool, schema_name).await?;
     let models = introspect_tables(pool, schema_name, &enums).await?;
@@ -23,12 +29,14 @@ pub async fn introspect_postgres(pool: &PgPool, schema_name: &str) -> Result<Sch
     })
 }
 
+#[cfg(feature = "postgres")]
 #[derive(sqlx::FromRow)]
 struct PgEnum {
     typname: String,
     enumlabel: String,
 }
 
+#[cfg(feature = "postgres")]
 async fn introspect_enums(pool: &PgPool, schema_name: &str) -> Result<Vec<Enum>, sqlx::Error> {
     let rows = sqlx::query_as::<_, PgEnum>(
         r#"
@@ -66,6 +74,7 @@ async fn introspect_enums(pool: &PgPool, schema_name: &str) -> Result<Vec<Enum>,
         .collect())
 }
 
+#[cfg(feature = "postgres")]
 #[derive(sqlx::FromRow)]
 struct PgColumn {
     table_name: String,
@@ -76,6 +85,7 @@ struct PgColumn {
     column_default: Option<String>,
 }
 
+#[cfg(feature = "postgres")]
 #[derive(sqlx::FromRow)]
 struct PgConstraint {
     table_name: String,
@@ -84,6 +94,7 @@ struct PgConstraint {
     column_name: Option<String>,
 }
 
+#[cfg(feature = "postgres")]
 #[derive(sqlx::FromRow)]
 struct PgForeignKey {
     table_name: String,
@@ -94,6 +105,7 @@ struct PgForeignKey {
     update_rule: String,
 }
 
+#[cfg(feature = "postgres")]
 #[derive(sqlx::FromRow)]
 struct PgIndex {
     tablename: String,
@@ -101,6 +113,7 @@ struct PgIndex {
     indexdef: String,
 }
 
+#[cfg(feature = "postgres")]
 async fn introspect_tables(
     pool: &PgPool,
     schema_name: &str,
@@ -273,6 +286,7 @@ async fn introspect_tables(
     Ok(models)
 }
 
+#[cfg(feature = "postgres")]
 fn pg_type_to_field_kind(data_type: &str, udt_name: &str, enums: &[Enum]) -> FieldKind {
     // Check if it's a user-defined enum
     if data_type == "USER-DEFINED" {
@@ -302,6 +316,7 @@ fn pg_type_to_field_kind(data_type: &str, udt_name: &str, enums: &[Enum]) -> Fie
     FieldKind::Scalar(scalar)
 }
 
+#[cfg(feature = "postgres")]
 fn parse_pg_default(default: &str) -> Option<DefaultValue> {
     let d = default.trim();
 
@@ -341,16 +356,7 @@ fn parse_pg_default(default: &str) -> Option<DefaultValue> {
     None
 }
 
-fn parse_referential_action(rule: &str) -> ReferentialAction {
-    match rule {
-        "CASCADE" => ReferentialAction::Cascade,
-        "SET NULL" => ReferentialAction::SetNull,
-        "SET DEFAULT" => ReferentialAction::SetDefault,
-        "RESTRICT" => ReferentialAction::Restrict,
-        _ => ReferentialAction::NoAction,
-    }
-}
-
+#[cfg(feature = "postgres")]
 fn parse_index_columns(indexdef: &str) -> Vec<String> {
     // indexdef looks like: CREATE INDEX idx_name ON table_name USING btree (col1, col2)
     if let Some(start) = indexdef.find('(') {
@@ -362,6 +368,292 @@ fn parse_index_columns(indexdef: &str) -> Vec<String> {
         }
     }
     vec![]
+}
+
+// ─── SQLite introspection ──────────────────────────────────────────
+
+/// Introspect a SQLite database and produce a Schema IR.
+///
+/// SQLite has no real enum types — all "enum" columns are just TEXT.
+/// Foreign keys are read via PRAGMA foreign_key_list.
+/// Indexes are read via PRAGMA index_list + PRAGMA index_info.
+#[cfg(feature = "sqlite")]
+pub async fn introspect_sqlite(pool: &SqlitePool) -> Result<Schema, sqlx::Error> {
+    let tables = introspect_sqlite_tables(pool).await?;
+
+    Ok(Schema {
+        datasource: DatasourceConfig {
+            name: "db".into(),
+            provider: DatabaseProvider::SQLite,
+            url: String::new(),
+        },
+        generators: vec![],
+        enums: vec![], // SQLite has no enum types
+        models: tables,
+    })
+}
+
+/// Row from sqlite_master for tables.
+#[cfg(feature = "sqlite")]
+#[derive(sqlx::FromRow)]
+struct SqliteTable {
+    name: String,
+}
+
+/// Row from PRAGMA table_info(table_name).
+#[cfg(feature = "sqlite")]
+#[derive(sqlx::FromRow)]
+struct SqliteColumnInfo {
+    name: String,
+    #[sqlx(rename = "type")]
+    col_type: String,
+    notnull: i32,
+    dflt_value: Option<String>,
+    pk: i32,
+}
+
+/// Row from PRAGMA foreign_key_list(table_name).
+#[cfg(feature = "sqlite")]
+#[derive(sqlx::FromRow)]
+struct SqliteForeignKey {
+    table: String,
+    from: String,
+    to: String,
+    on_delete: String,
+    on_update: String,
+}
+
+/// Row from PRAGMA index_list(table_name).
+#[cfg(feature = "sqlite")]
+#[derive(sqlx::FromRow)]
+struct SqliteIndexListEntry {
+    name: String,
+    unique: i32,
+    origin: String,
+}
+
+/// Row from PRAGMA index_info(index_name).
+#[cfg(feature = "sqlite")]
+#[derive(sqlx::FromRow)]
+struct SqliteIndexInfo {
+    name: Option<String>,
+}
+
+#[cfg(feature = "sqlite")]
+async fn introspect_sqlite_tables(pool: &SqlitePool) -> Result<Vec<Model>, sqlx::Error> {
+    // List all user tables (exclude internal sqlite_ tables and _ormx_ tables)
+    let tables = sqlx::query_as::<_, SqliteTable>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_%' ESCAPE '\\'",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut models = Vec::new();
+
+    for table in &tables {
+        let table_name = &table.name;
+
+        // Get column info
+        let columns = sqlx::query_as::<_, SqliteColumnInfo>(&format!(
+            "PRAGMA table_info(\"{}\")",
+            table_name
+        ))
+        .fetch_all(pool)
+        .await?;
+
+        // Get foreign keys
+        let foreign_keys = sqlx::query_as::<_, SqliteForeignKey>(&format!(
+            "PRAGMA foreign_key_list(\"{}\")",
+            table_name
+        ))
+        .fetch_all(pool)
+        .await?;
+
+        // Get indexes
+        let index_list = sqlx::query_as::<_, SqliteIndexListEntry>(&format!(
+            "PRAGMA index_list(\"{}\")",
+            table_name
+        ))
+        .fetch_all(pool)
+        .await?;
+
+        // Determine primary key columns
+        let pk_columns: Vec<String> = columns
+            .iter()
+            .filter(|c| c.pk > 0)
+            .map(|c| c.name.clone())
+            .collect();
+
+        // Determine unique columns from unique indexes (origin 'u' = user-created unique)
+        let mut unique_columns: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for idx in &index_list {
+            if idx.unique == 1 && idx.origin != "pk" {
+                // Get columns in this index
+                let idx_cols = sqlx::query_as::<_, SqliteIndexInfo>(&format!(
+                    "PRAGMA index_info(\"{}\")",
+                    idx.name
+                ))
+                .fetch_all(pool)
+                .await?;
+                // Only mark as unique if single-column index
+                if idx_cols.len() == 1 {
+                    if let Some(col_name) = &idx_cols[0].name {
+                        unique_columns.insert(col_name.clone());
+                    }
+                }
+            }
+        }
+
+        // Build fields
+        let mut fields = Vec::new();
+        for col in &columns {
+            let is_id = col.pk > 0;
+            let is_unique = unique_columns.contains(&col.name);
+            let is_nullable = col.notnull == 0 && !is_id;
+
+            let field_type = sqlite_type_to_field_kind(&col.col_type);
+            let default = col
+                .dflt_value
+                .as_ref()
+                .and_then(|d| parse_sqlite_default(d));
+            let is_updated_at = col
+                .dflt_value
+                .as_ref()
+                .is_some_and(|d| d.contains("CURRENT_TIMESTAMP"));
+
+            // Check if this column is a foreign key
+            let relation = foreign_keys
+                .iter()
+                .find(|fk| fk.from == col.name)
+                .map(|fk| ResolvedRelation {
+                    related_model: to_pascal_case(&fk.table),
+                    relation_type: RelationType::ManyToOne,
+                    fields: vec![col.name.clone()],
+                    references: vec![fk.to.clone()],
+                    on_delete: parse_referential_action(&fk.on_delete),
+                    on_update: parse_referential_action(&fk.on_update),
+                });
+
+            fields.push(Field {
+                name: to_camel_case(&col.name),
+                db_name: col.name.clone(),
+                field_type,
+                is_optional: is_nullable,
+                is_list: false,
+                is_id,
+                is_unique,
+                is_updated_at,
+                default,
+                relation,
+            });
+        }
+
+        // Parse indexes (non-unique, non-pk indexes)
+        let mut model_indexes = Vec::new();
+        for idx in &index_list {
+            if idx.origin == "c" && idx.unique == 0 {
+                let idx_cols = sqlx::query_as::<_, SqliteIndexInfo>(&format!(
+                    "PRAGMA index_info(\"{}\")",
+                    idx.name
+                ))
+                .fetch_all(pool)
+                .await?;
+                let col_names: Vec<String> =
+                    idx_cols.iter().filter_map(|c| c.name.clone()).collect();
+                if !col_names.is_empty() {
+                    model_indexes.push(Index { fields: col_names });
+                }
+            }
+        }
+
+        models.push(Model {
+            name: to_pascal_case(table_name),
+            db_name: table_name.clone(),
+            fields,
+            primary_key: PrimaryKey { fields: pk_columns },
+            indexes: model_indexes,
+            unique_constraints: vec![],
+        });
+    }
+
+    Ok(models)
+}
+
+#[cfg(feature = "sqlite")]
+fn sqlite_type_to_field_kind(col_type: &str) -> FieldKind {
+    let upper = col_type.to_uppercase();
+    let scalar = match upper.as_str() {
+        "TEXT" | "VARCHAR" | "CHAR" | "CLOB" => ScalarType::String,
+        "INTEGER" | "INT" | "SMALLINT" | "TINYINT" | "MEDIUMINT" => ScalarType::Int,
+        "BIGINT" => ScalarType::BigInt,
+        "REAL" | "DOUBLE" | "DOUBLE PRECISION" | "FLOAT" => ScalarType::Float,
+        "NUMERIC" | "DECIMAL" => ScalarType::Decimal,
+        "BOOLEAN" | "BOOL" => ScalarType::Boolean,
+        "BLOB" => ScalarType::Bytes,
+        "DATETIME" | "TIMESTAMP" => ScalarType::DateTime,
+        _ => {
+            // SQLite type affinity rules
+            if upper.contains("INT") {
+                ScalarType::Int
+            } else if upper.contains("CHAR") || upper.contains("CLOB") || upper.contains("TEXT") {
+                ScalarType::String
+            } else if upper.contains("BLOB") {
+                ScalarType::Bytes
+            } else if upper.contains("REAL") || upper.contains("FLOA") || upper.contains("DOUB") {
+                ScalarType::Float
+            } else {
+                ScalarType::String // NUMERIC affinity fallback
+            }
+        }
+    };
+
+    FieldKind::Scalar(scalar)
+}
+
+#[cfg(feature = "sqlite")]
+fn parse_sqlite_default(default: &str) -> Option<DefaultValue> {
+    let d = default.trim();
+
+    if d.eq_ignore_ascii_case("CURRENT_TIMESTAMP") {
+        return Some(DefaultValue::Now);
+    }
+
+    // String literal: 'value'
+    if d.starts_with('\'') && d.ends_with('\'') && d.len() >= 2 {
+        let val = &d[1..d.len() - 1];
+        return Some(DefaultValue::Literal(LiteralValue::String(val.to_string())));
+    }
+
+    // Boolean (SQLite uses 0/1 but also supports TRUE/FALSE keywords)
+    if d.eq_ignore_ascii_case("TRUE") || d == "1" {
+        return Some(DefaultValue::Literal(LiteralValue::Bool(true)));
+    }
+    if d.eq_ignore_ascii_case("FALSE") || d == "0" {
+        return Some(DefaultValue::Literal(LiteralValue::Bool(false)));
+    }
+
+    // Numeric
+    if let Ok(i) = d.parse::<i64>() {
+        return Some(DefaultValue::Literal(LiteralValue::Int(i)));
+    }
+    if let Ok(f) = d.parse::<f64>() {
+        return Some(DefaultValue::Literal(LiteralValue::Float(f)));
+    }
+
+    None
+}
+
+// ─── Shared helpers ────────────────────────────────────────────────
+
+fn parse_referential_action(rule: &str) -> ReferentialAction {
+    match rule {
+        "CASCADE" => ReferentialAction::Cascade,
+        "SET NULL" => ReferentialAction::SetNull,
+        "SET DEFAULT" => ReferentialAction::SetDefault,
+        "RESTRICT" => ReferentialAction::Restrict,
+        _ => ReferentialAction::NoAction,
+    }
 }
 
 fn to_pascal_case(s: &str) -> String {
