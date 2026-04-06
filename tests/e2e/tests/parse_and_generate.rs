@@ -50,12 +50,12 @@ model Post {
 #[test]
 fn parse_and_validate_schema() {
     let schema =
-        ormx_parser::parse_and_validate(SCHEMA).expect("parse_and_validate should succeed");
+        ferriorm_parser::parse_and_validate(SCHEMA).expect("parse_and_validate should succeed");
 
     // Verify datasource
     assert_eq!(
         schema.datasource.provider,
-        ormx_core::types::DatabaseProvider::SQLite
+        ferriorm_core::types::DatabaseProvider::SQLite
     );
     assert_eq!(schema.datasource.url, "sqlite::memory:");
 
@@ -88,7 +88,7 @@ fn parse_and_validate_schema() {
     assert!(id_field.is_id);
     assert_eq!(
         id_field.field_type,
-        ormx_core::schema::FieldKind::Scalar(ormx_core::types::ScalarType::String)
+        ferriorm_core::schema::FieldKind::Scalar(ferriorm_core::types::ScalarType::String)
     );
 
     let email_field = user
@@ -113,7 +113,7 @@ fn parse_and_validate_schema() {
         .expect("status field");
     assert_eq!(
         status_field.field_type,
-        ormx_core::schema::FieldKind::Enum("Status".into())
+        ferriorm_core::schema::FieldKind::Enum("Status".into())
     );
 
     let updated_at_field = user
@@ -149,12 +149,12 @@ fn parse_and_validate_schema() {
 #[test]
 fn generate_code_to_temp_dir() {
     let schema =
-        ormx_parser::parse_and_validate(SCHEMA).expect("parse_and_validate should succeed");
+        ferriorm_parser::parse_and_validate(SCHEMA).expect("parse_and_validate should succeed");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let output_dir = tmp_dir.path().join("generated");
 
-    ormx_codegen::generator::generate(&schema, &output_dir)
+    ferriorm_codegen::generator::generate(&schema, &output_dir)
         .expect("code generation should succeed");
 
     // Verify expected files exist
@@ -181,12 +181,12 @@ fn generate_code_to_temp_dir() {
 #[test]
 fn generated_code_contains_expected_structures() {
     let schema =
-        ormx_parser::parse_and_validate(SCHEMA).expect("parse_and_validate should succeed");
+        ferriorm_parser::parse_and_validate(SCHEMA).expect("parse_and_validate should succeed");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let output_dir = tmp_dir.path().join("generated");
 
-    ormx_codegen::generator::generate(&schema, &output_dir)
+    ferriorm_codegen::generator::generate(&schema, &output_dir)
         .expect("code generation should succeed");
 
     // Verify mod.rs exports
@@ -208,8 +208,8 @@ fn generated_code_contains_expected_structures() {
         "mod.rs should export enums module"
     );
     assert!(
-        mod_content.contains("pub use client::OrmxClient;"),
-        "mod.rs should re-export OrmxClient"
+        mod_content.contains("pub use client::FerriormClient;"),
+        "mod.rs should re-export FerriormClient"
     );
 
     // Verify user.rs contains the User struct
@@ -245,11 +245,11 @@ fn generated_code_contains_expected_structures() {
         "Status enum should contain Suspended variant"
     );
 
-    // Verify client.rs contains OrmxClient
+    // Verify client.rs contains FerriormClient
     let client_content = std::fs::read_to_string(output_dir.join("client.rs")).unwrap();
     assert!(
-        client_content.contains("OrmxClient"),
-        "client.rs should contain OrmxClient struct"
+        client_content.contains("FerriormClient"),
+        "client.rs should contain FerriormClient struct"
     );
 }
 
@@ -267,7 +267,7 @@ model User {
 }
 "#;
     // Missing @id should fail validation
-    let result = ormx_parser::parse_and_validate(invalid);
+    let result = ferriorm_parser::parse_and_validate(invalid);
     assert!(
         result.is_err(),
         "Schema without primary key should fail validation"
@@ -287,7 +287,7 @@ model User {
   role UnknownType
 }
 "#;
-    let result = ormx_parser::parse_and_validate(invalid);
+    let result = ferriorm_parser::parse_and_validate(invalid);
     assert!(
         result.is_err(),
         "Schema with unknown type should fail validation"
@@ -313,13 +313,13 @@ model User {
   @@map("users")
 }
 "#;
-    let schema = ormx_parser::parse_and_validate(schema_no_enums)
+    let schema = ferriorm_parser::parse_and_validate(schema_no_enums)
         .expect("parse_and_validate should succeed");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let output_dir = tmp_dir.path().join("generated");
 
-    ormx_codegen::generator::generate(&schema, &output_dir)
+    ferriorm_codegen::generator::generate(&schema, &output_dir)
         .expect("code generation should succeed");
 
     assert!(

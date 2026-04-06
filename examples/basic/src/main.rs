@@ -1,15 +1,15 @@
 mod generated;
 
-use generated::OrmxClient;
-use ormx_runtime::prelude::*;
+use generated::FerriormClient;
+use ferriorm_runtime::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://localhost/ormx_example".into());
+        .unwrap_or_else(|_| "postgres://localhost/ferriorm_example".into());
 
     println!("Connecting to {database_url}...");
-    let client = OrmxClient::connect(&database_url).await?;
+    let client = FerriormClient::connect(&database_url).await?;
 
     // ─── CREATE a user ─────────────────────────────────────
     let user = client

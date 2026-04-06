@@ -3,12 +3,12 @@
 //! These tests verify that various schema modifications produce the correct
 //! MigrationStep variants and that the rendered SQL is correct for SQLite.
 
-use ormx_core::ast::{DefaultValue, LiteralValue, ReferentialAction};
-use ormx_core::schema::*;
-use ormx_core::types::{DatabaseProvider, ScalarType};
-use ormx_core::utils::to_snake_case;
-use ormx_migrate::diff::{self, MigrationStep};
-use ormx_migrate::sql;
+use ferriorm_core::ast::{DefaultValue, LiteralValue, ReferentialAction};
+use ferriorm_core::schema::*;
+use ferriorm_core::types::{DatabaseProvider, ScalarType};
+use ferriorm_core::utils::to_snake_case;
+use ferriorm_migrate::diff::{self, MigrationStep};
+use ferriorm_migrate::sql;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -879,8 +879,8 @@ fn diff_snapshot_round_trip() {
         }],
     );
 
-    let json = ormx_migrate::snapshot::serialize(&schema).expect("serialize");
-    let deserialized = ormx_migrate::snapshot::deserialize(&json).expect("deserialize");
+    let json = ferriorm_migrate::snapshot::serialize(&schema).expect("serialize");
+    let deserialized = ferriorm_migrate::snapshot::deserialize(&json).expect("deserialize");
 
     // Diff the original and deserialized -- should be empty (no changes)
     let steps = diff::diff_schemas(&schema, &deserialized, DatabaseProvider::SQLite);
@@ -944,8 +944,8 @@ model Post {
 }
 "#;
 
-    let schema_v1 = ormx_parser::parse_and_validate(v1_source).expect("parse v1");
-    let schema_v2 = ormx_parser::parse_and_validate(v2_source).expect("parse v2");
+    let schema_v1 = ferriorm_parser::parse_and_validate(v1_source).expect("parse v1");
+    let schema_v2 = ferriorm_parser::parse_and_validate(v2_source).expect("parse v2");
 
     let steps = diff::diff_schemas(&schema_v1, &schema_v2, DatabaseProvider::SQLite);
 

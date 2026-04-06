@@ -1,15 +1,15 @@
 [package]
-name = "ormx-e2e-tests"
+name = "ferriorm-e2e-tests"
 version = "0.0.0"
 edition = "2024"
 publish = false
 
 [dependencies]
-ormx-core = { path = "../../crates/ormx-core", features = ["serde"] }
-ormx-parser = { path = "../../crates/ormx-parser" }
-ormx-codegen = { path = "../../crates/ormx-codegen" }
-ormx-migrate = { path = "../../crates/ormx-migrate", default-features = false, features = ["sqlite"] }
-ormx-runtime = { path = "../../crates/ormx-runtime", default-features = false, features = ["sqlite"] }
+ferriorm-core = { path = "../../crates/ferriorm-core", features = ["serde"] }
+ferriorm-parser = { path = "../../crates/ferriorm-parser" }
+ferriorm-codegen = { path = "../../crates/ferriorm-codegen" }
+ferriorm-migrate = { path = "../../crates/ferriorm-migrate", default-features = false, features = ["sqlite"] }
+ferriorm-runtime = { path = "../../crates/ferriorm-runtime", default-features = false, features = ["sqlite"] }
 
 sqlx = { workspace = true, features = ["sqlite"] }
 tokio = { workspace = true }

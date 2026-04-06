@@ -424,6 +424,100 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a043dc74da1e37d6afe657061213aa6f425f855399a11d3463c6ecccc4dfda1f"
 
 [[package]]
+name = "ferriorm-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ferriorm-codegen",
+ "ferriorm-core",
+ "ferriorm-migrate",
+ "ferriorm-parser",
+ "ferriorm-runtime",
+ "miette",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ferriorm-codegen"
+version = "0.1.0"
+dependencies = [
+ "ferriorm-core",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ferriorm-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "ferriorm-e2e-tests"
+version = "0.0.0"
+dependencies = [
+ "ferriorm-codegen",
+ "ferriorm-core",
+ "ferriorm-migrate",
+ "ferriorm-parser",
+ "ferriorm-runtime",
+ "serde_json",
+ "sqlx",
+ "syn",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "ferriorm-migrate"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ferriorm-core",
+ "ferriorm-parser",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "ferriorm-parser"
+version = "0.1.0"
+dependencies = [
+ "ferriorm-core",
+ "miette",
+ "pest",
+ "pest_derive",
+ "thiserror",
+]
+
+[[package]]
+name = "ferriorm-runtime"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ferriorm-core",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1031,100 +1125,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "ormx-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "miette",
- "ormx-codegen",
- "ormx-core",
- "ormx-migrate",
- "ormx-parser",
- "ormx-runtime",
- "sqlx",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ormx-codegen"
-version = "0.1.0"
-dependencies = [
- "ormx-core",
- "prettyplease",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "ormx-core"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "ormx-e2e-tests"
-version = "0.0.0"
-dependencies = [
- "ormx-codegen",
- "ormx-core",
- "ormx-migrate",
- "ormx-parser",
- "ormx-runtime",
- "serde_json",
- "sqlx",
- "syn",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "ormx-migrate"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "ormx-core",
- "ormx-parser",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ormx-parser"
-version = "0.1.0"
-dependencies = [
- "miette",
- "ormx-core",
- "pest",
- "pest_derive",
- "thiserror",
-]
-
-[[package]]
-name = "ormx-runtime"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "ormx-core",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
 
 [[package]]
 name = "owo-colors"

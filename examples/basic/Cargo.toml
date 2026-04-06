@@ -1,11 +1,11 @@
 [package]
-name = "ormx-example-basic"
+name = "ferriorm-example-basic"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [dependencies]
-ormx-runtime = { path = "../../crates/ormx-runtime", features = ["postgres", "sqlite"] }
+ferriorm-runtime = { path = "../../crates/ferriorm-runtime", features = ["postgres", "sqlite"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "sqlite", "chrono", "uuid"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

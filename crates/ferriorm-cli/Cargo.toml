@@ -1,0 +1,23 @@
+[package]
+name = "ferriorm-cli"
+description = "CLI for ferriorm ORM - init, generate, migrate commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ferriorm"
+path = "src/main.rs"
+
+[dependencies]
+ferriorm-core.workspace = true
+ferriorm-parser.workspace = true
+ferriorm-codegen.workspace = true
+ferriorm-runtime.workspace = true
+ferriorm-migrate = { workspace = true, features = ["postgres", "sqlite"] }
+clap.workspace = true
+sqlx = { workspace = true, features = ["postgres", "sqlite"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+miette.workspace = true

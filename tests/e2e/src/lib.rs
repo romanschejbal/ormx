@@ -1,2 +1,2 @@
-// This crate exists solely to host integration tests for ormx.
+// This crate exists solely to host integration tests for ferriorm.
 // All tests live in the `tests/` directory.

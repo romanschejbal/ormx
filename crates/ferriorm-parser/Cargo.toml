@@ -1,0 +1,13 @@
+[package]
+name = "ferriorm-parser"
+description = "Schema parser for ferriorm ORM - parses .ferriorm files into AST"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ferriorm-core.workspace = true
+pest.workspace = true
+pest_derive.workspace = true
+miette.workspace = true
+thiserror.workspace = true

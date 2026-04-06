@@ -4,7 +4,7 @@
 //! existing migrations into it, introspects the result, and then diffs against
 //! the current schema. This tests the full shadow DB flow.
 
-use ormx_migrate::{MigrationRunner, MigrationStrategy};
+use ferriorm_migrate::{MigrationRunner, MigrationStrategy};
 use sqlx::SqlitePool;
 
 const SCHEMA_V1: &str = r#"
@@ -83,14 +83,14 @@ async fn get_column_names(pool: &SqlitePool, table: &str) -> Vec<String> {
 
 #[tokio::test]
 async fn shadow_create_initial_migration() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::ShadowDatabase,
     );
 
@@ -130,14 +130,14 @@ async fn shadow_create_initial_migration() {
 
 #[tokio::test]
 async fn shadow_apply_and_verify() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::ShadowDatabase,
     );
 
@@ -161,15 +161,15 @@ async fn shadow_apply_and_verify() {
 
 #[tokio::test]
 async fn shadow_second_migration_via_introspection() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
-    let schema_v2 = ormx_parser::parse_and_validate(SCHEMA_V2).expect("parse v2");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v2 = ferriorm_parser::parse_and_validate(SCHEMA_V2).expect("parse v2");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::ShadowDatabase,
     );
 
@@ -239,14 +239,14 @@ async fn shadow_second_migration_via_introspection() {
 
 #[tokio::test]
 async fn shadow_detects_no_changes() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::ShadowDatabase,
     );
 
@@ -270,15 +270,15 @@ async fn shadow_detects_no_changes() {
 
 #[tokio::test]
 async fn shadow_can_insert_data_after_multi_migration() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
-    let schema_v2 = ormx_parser::parse_and_validate(SCHEMA_V2).expect("parse v2");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v2 = ferriorm_parser::parse_and_validate(SCHEMA_V2).expect("parse v2");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::ShadowDatabase,
     );
 

@@ -8,7 +8,7 @@
 //! 5. Verify the database state
 //! 6. Modify the schema, create another migration, apply, verify
 
-use ormx_migrate::{MigrationRunner, MigrationStrategy};
+use ferriorm_migrate::{MigrationRunner, MigrationStrategy};
 use sqlx::SqlitePool;
 
 const SCHEMA_V1: &str = r#"
@@ -112,14 +112,14 @@ async fn get_column_names(pool: &SqlitePool, table: &str) -> Vec<String> {
 
 #[tokio::test]
 async fn snapshot_create_initial_migration() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::Snapshot,
     );
 
@@ -183,14 +183,14 @@ async fn snapshot_create_initial_migration() {
 
 #[tokio::test]
 async fn snapshot_apply_migration_creates_table() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::Snapshot,
     );
 
@@ -253,14 +253,14 @@ async fn snapshot_apply_migration_creates_table() {
 
 #[tokio::test]
 async fn snapshot_migration_status_after_apply() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::Snapshot,
     );
 
@@ -293,15 +293,15 @@ async fn snapshot_migration_status_after_apply() {
 
 #[tokio::test]
 async fn snapshot_second_migration_adds_column_and_table() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
-    let schema_v2 = ormx_parser::parse_and_validate(SCHEMA_V2).expect("parse v2");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v2 = ferriorm_parser::parse_and_validate(SCHEMA_V2).expect("parse v2");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::Snapshot,
     );
 
@@ -399,14 +399,14 @@ async fn snapshot_second_migration_adds_column_and_table() {
 
 #[tokio::test]
 async fn snapshot_no_changes_returns_none() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::Snapshot,
     );
 
@@ -431,14 +431,14 @@ async fn snapshot_no_changes_returns_none() {
 
 #[tokio::test]
 async fn snapshot_apply_is_idempotent() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::Snapshot,
     );
 
@@ -471,14 +471,14 @@ async fn snapshot_apply_is_idempotent() {
 
 #[tokio::test]
 async fn snapshot_can_insert_and_query_data_after_migration() {
-    let schema_v1 = ormx_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
+    let schema_v1 = ferriorm_parser::parse_and_validate(SCHEMA_V1).expect("parse v1");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let migrations_dir = tmp_dir.path().join("migrations");
 
     let runner = MigrationRunner::new(
         migrations_dir.clone(),
-        ormx_core::types::DatabaseProvider::SQLite,
+        ferriorm_core::types::DatabaseProvider::SQLite,
         MigrationStrategy::Snapshot,
     );
 

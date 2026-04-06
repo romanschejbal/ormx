@@ -1,15 +1,15 @@
-# ormx
+# ferriorm
 
 **A Prisma-inspired ORM for Rust** -- schema-first, type-safe, with automatic code generation.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
-[![CI](https://github.com/romanschejbal/ormx/actions/workflows/ci.yml/badge.svg)](https://github.com/romanschejbal/ormx/actions/workflows/ci.yml)
+[![CI](https://github.com/romanschejbal/ferriorm/actions/workflows/ci.yml/badge.svg)](https://github.com/romanschejbal/ferriorm/actions/workflows/ci.yml)
 
-## Why ormx?
+## Why ferriorm?
 
-Existing Rust ORMs require manually defining structs, writing migrations, and wiring everything together. ormx takes the Prisma approach: **define your schema once**, and everything else -- type-safe Rust client, migrations, query builders -- is generated for you.
+Existing Rust ORMs require manually defining structs, writing migrations, and wiring everything together. ferriorm takes the Prisma approach: **define your schema once**, and everything else -- type-safe Rust client, migrations, query builders -- is generated for you.
 
-- **Schema-first**: Single `.ormx` file is your source of truth
+- **Schema-first**: Single `.ferriorm` file is your source of truth
 - **Type-safe**: Generated Rust code catches errors at compile time
 - **Zero boilerplate**: No derive macros to write, no manual struct definitions
 - **Easy migrations**: Automatic schema diffing with shadow database support
@@ -20,19 +20,19 @@ Existing Rust ORMs require manually defining structs, writing migrations, and wi
 ### 1. Install
 
 ```bash
-cargo install ormx-cli
+cargo install ferriorm-cli
 ```
 
 ### 2. Initialize
 
 ```bash
-ormx init --provider postgresql
+ferriorm init --provider postgresql
 ```
 
 ### 3. Define your schema
 
 ```prisma
-// schema.ormx
+// schema.ferriorm
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -56,18 +56,18 @@ model User {
 ### 4. Generate & migrate
 
 ```bash
-ormx migrate dev --name init
+ferriorm migrate dev --name init
 ```
 
 ### 5. Use in your code
 
 ```rust
-use generated::OrmxClient;
-use ormx_runtime::prelude::*;
+use generated::FerriormClient;
+use ferriorm_runtime::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = OrmxClient::connect("postgres://localhost/mydb").await?;
+    let client = FerriormClient::connect("postgres://localhost/mydb").await?;
 
     // Create
     let user = client.user().create(user::data::UserCreateInput {
@@ -131,31 +131,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Architecture
 
-ormx is a Rust workspace with 6 crates following onion architecture:
+ferriorm is a Rust workspace with 6 crates following onion architecture:
 
 ```
-ormx-cli          -> orchestrates everything
-|-- ormx-parser   -> parses .ormx schema files
-|-- ormx-codegen  -> generates Rust source code
-|-- ormx-migrate  -> migration engine
-\-- ormx-runtime  -> ships with user's app (DB client, filters, queries)
-      \-- ormx-core -> pure domain types (zero external dependencies)
+ferriorm-cli          -> orchestrates everything
+|-- ferriorm-parser   -> parses .ferriorm schema files
+|-- ferriorm-codegen  -> generates Rust source code
+|-- ferriorm-migrate  -> migration engine
+\-- ferriorm-runtime  -> ships with user's app (DB client, filters, queries)
+      \-- ferriorm-core -> pure domain types (zero external dependencies)
 ```
 
 ## CLI Reference
 
 | Command | Description |
 |---------|-------------|
-| `ormx init` | Initialize a new ormx project |
-| `ormx generate` | Generate Rust client from schema |
-| `ormx migrate dev` | Create + apply migration + regenerate (development) |
-| `ormx migrate deploy` | Apply pending migrations (production) |
-| `ormx migrate status` | Show migration status |
-| `ormx db pull` | Introspect database and generate schema |
+| `ferriorm init` | Initialize a new ferriorm project |
+| `ferriorm generate` | Generate Rust client from schema |
+| `ferriorm migrate dev` | Create + apply migration + regenerate (development) |
+| `ferriorm migrate deploy` | Apply pending migrations (production) |
+| `ferriorm migrate status` | Show migration status |
+| `ferriorm db pull` | Introspect database and generate schema |
 
 ## Status
 
-ormx is in active development. Here is what's done and what's planned:
+ferriorm is in active development. Here is what's done and what's planned:
 
 ### Done
 - [x] Schema parser with PEG grammar
@@ -180,8 +180,8 @@ ormx is in active development. Here is what's done and what's planned:
 - [ ] Raw SQL escape hatch
 - [ ] Aggregate queries (sum, avg, min, max, groupBy)
 - [ ] Cursor-based pagination
-- [ ] Schema formatting (`ormx format`)
-- [ ] LSP for .ormx files
+- [ ] Schema formatting (`ferriorm format`)
+- [ ] LSP for .ferriorm files
 - [ ] Connection pooling configuration
 - [ ] Seeding support
 
