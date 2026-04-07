@@ -7,16 +7,45 @@
 
 use super::SqlRenderer;
 use crate::diff::*;
+use std::collections::HashMap;
 
 pub struct SqliteRenderer;
 
 impl SqlRenderer for SqliteRenderer {
     fn render(&self, steps: &[MigrationStep]) -> String {
+        // First pass: collect all AddForeignKey steps keyed by table name.
+        // These will be inlined into the corresponding CREATE TABLE statements
+        // because SQLite does not support ALTER TABLE ADD CONSTRAINT FOREIGN KEY.
+        let mut fk_map: HashMap<&str, Vec<&ForeignKeyDef>> = HashMap::new();
+        for step in steps {
+            if let MigrationStep::AddForeignKey(fk) = step {
+                fk_map.entry(fk.table.as_str()).or_default().push(fk);
+            }
+        }
+
         let mut sql = String::new();
         sql.push_str("PRAGMA foreign_keys = ON;\n\n");
         for step in steps {
-            sql.push_str(&render_step(step));
-            sql.push('\n');
+            match step {
+                // Skip standalone AddForeignKey steps whose table has a
+                // corresponding CreateTable — they are already inlined.
+                MigrationStep::AddForeignKey(fk)
+                    if steps.iter().any(
+                        |s| matches!(s, MigrationStep::CreateTable(ct) if ct.name == fk.table),
+                    ) =>
+                {
+                    // Already rendered inline in the CREATE TABLE.
+                }
+                MigrationStep::CreateTable(ct) => {
+                    let fks = fk_map.get(ct.name.as_str()).map(|v| v.as_slice());
+                    sql.push_str(&render_create_table(ct, fks));
+                    sql.push('\n');
+                }
+                _ => {
+                    sql.push_str(&render_step(step));
+                    sql.push('\n');
+                }
+            }
         }
         sql
     }
@@ -47,7 +76,7 @@ fn render_step(step: &MigrationStep) -> String {
                 variant.to_lowercase()
             )
         }
-        MigrationStep::CreateTable(ct) => render_create_table(ct),
+        MigrationStep::CreateTable(ct) => render_create_table(ct, None),
         MigrationStep::DropTable { name } => {
             format!("DROP TABLE IF EXISTS \"{name}\";\n")
         }
@@ -121,7 +150,7 @@ fn render_step(step: &MigrationStep) -> String {
     }
 }
 
-fn render_create_table(ct: &CreateTable) -> String {
+fn render_create_table(ct: &CreateTable, fks: Option<&[&ForeignKeyDef]>) -> String {
     let mut sql = format!("CREATE TABLE \"{}\" (\n", ct.name);
 
     for (i, col) in ct.columns.iter().enumerate() {
@@ -130,6 +159,16 @@ fn render_create_table(ct: &CreateTable) -> String {
         }
         sql.push_str("    ");
         sql.push_str(&render_column_def(col));
+
+        // Append inline REFERENCES clause if a foreign key targets this column.
+        if let Some(fk_list) = fks
+            && let Some(fk) = fk_list.iter().find(|fk| fk.column == col.name)
+        {
+            sql.push_str(&format!(
+                " REFERENCES \"{}\"(\"{}\") ON DELETE {} ON UPDATE {}",
+                fk.referenced_table, fk.referenced_column, fk.on_delete, fk.on_update
+            ));
+        }
     }
 
     if !ct.primary_key.is_empty() {
@@ -235,7 +274,7 @@ mod tests {
             primary_key: vec!["id".into()],
         };
 
-        let sql = render_create_table(&ct);
+        let sql = render_create_table(&ct, None);
         assert!(sql.contains("CREATE TABLE \"users\""));
         assert!(sql.contains("\"id\" INTEGER NOT NULL"));
         assert!(sql.contains("\"email\" TEXT NOT NULL UNIQUE"));
@@ -286,7 +325,9 @@ mod tests {
     }
 
     #[test]
-    fn test_foreign_key_emits_comment() {
+    fn test_foreign_key_emits_comment_without_create_table() {
+        // When AddForeignKey is rendered without a matching CreateTable
+        // (e.g., adding FK to an existing table), it emits a comment.
         let step = MigrationStep::AddForeignKey(ForeignKeyDef {
             table: "posts".into(),
             constraint_name: "fk_posts_users".into(),
@@ -299,6 +340,52 @@ mod tests {
         let sql = SqliteRenderer.render(&[step]);
         assert!(sql.contains("-- SQLite: cannot add foreign key"));
         assert!(sql.contains("\"posts\".\"author_id\""));
+    }
+
+    #[test]
+    fn test_foreign_key_inline_with_create_table() {
+        // When AddForeignKey accompanies a CreateTable for the same table,
+        // the FK is rendered inline as a REFERENCES clause.
+        let steps = vec![
+            MigrationStep::CreateTable(CreateTable {
+                name: "posts".into(),
+                columns: vec![
+                    ColumnDef {
+                        name: "id".into(),
+                        sql_type: "TEXT".into(),
+                        nullable: false,
+                        default: None,
+                        is_unique: false,
+                    },
+                    ColumnDef {
+                        name: "author_id".into(),
+                        sql_type: "TEXT".into(),
+                        nullable: false,
+                        default: None,
+                        is_unique: false,
+                    },
+                ],
+                primary_key: vec!["id".into()],
+            }),
+            MigrationStep::AddForeignKey(ForeignKeyDef {
+                table: "posts".into(),
+                constraint_name: "fk_posts_users".into(),
+                column: "author_id".into(),
+                referenced_table: "users".into(),
+                referenced_column: "id".into(),
+                on_delete: "CASCADE".into(),
+                on_update: "NO ACTION".into(),
+            }),
+        ];
+        let sql = SqliteRenderer.render(&steps);
+        assert!(
+            sql.contains("REFERENCES \"users\"(\"id\") ON DELETE CASCADE ON UPDATE NO ACTION"),
+            "FK should be inlined as REFERENCES. Got:\n{sql}"
+        );
+        assert!(
+            !sql.contains("-- SQLite: cannot add foreign key"),
+            "Should NOT emit FK comment when inlined. Got:\n{sql}"
+        );
     }
 
     #[test]

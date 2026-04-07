@@ -90,7 +90,8 @@ impl DatabaseClient {
     /// Connect to a SQLite database.
     #[cfg(feature = "sqlite")]
     pub async fn connect_sqlite(url: &str) -> Result<Self, FerriormError> {
-        let pool = sqlx::SqlitePool::connect(url).await?;
+        let url = normalize_sqlite_url(url);
+        let pool = sqlx::SqlitePool::connect(&url).await?;
         Ok(Self::Sqlite(pool))
     }
 
@@ -100,6 +101,7 @@ impl DatabaseClient {
         url: &str,
         config: &PoolConfig,
     ) -> Result<Self, FerriormError> {
+        let url = normalize_sqlite_url(url);
         let mut opts = sqlx::sqlite::SqlitePoolOptions::new();
         if let Some(max) = config.max_connections {
             opts = opts.max_connections(max);
@@ -116,7 +118,7 @@ impl DatabaseClient {
         if let Some(timeout) = config.acquire_timeout {
             opts = opts.acquire_timeout(timeout);
         }
-        let pool = opts.connect(url).await?;
+        let pool = opts.connect(&url).await?;
         Ok(Self::Sqlite(pool))
     }
 
@@ -432,5 +434,31 @@ impl DatabaseClient {
             #[cfg(feature = "postgres")]
             _ => Err(FerriormError::Query("Expected SQLite connection".into())),
         }
+    }
+}
+
+/// Normalize a SQLite connection URL for sqlx.
+///
+/// Converts `file:` prefixed URLs (e.g. `file:./dev.db`) to the `sqlite:`
+/// scheme that sqlx expects, and appends `?mode=rwc` so the database file
+/// is auto-created if it does not exist.
+#[cfg(feature = "sqlite")]
+pub fn normalize_sqlite_url(url: &str) -> String {
+    let url = if let Some(path) = url.strip_prefix("file:") {
+        format!("sqlite:{}", path)
+    } else if !url.starts_with("sqlite:") {
+        format!("sqlite:{}", url)
+    } else {
+        url.to_string()
+    };
+    // Ensure mode=rwc for auto-creation
+    if !url.contains("mode=") {
+        if url.contains('?') {
+            format!("{}&mode=rwc", url)
+        } else {
+            format!("{}?mode=rwc", url)
+        }
+    } else {
+        url
     }
 }

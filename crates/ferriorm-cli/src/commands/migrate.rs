@@ -176,11 +176,29 @@ async fn apply_pending(
 }
 
 pub fn resolve_url(url: &str) -> miette::Result<String> {
-    if url.starts_with("${env:") && url.ends_with('}') {
+    let resolved = if url.starts_with("${env:") && url.ends_with('}') {
         let var_name = &url[6..url.len() - 1];
         std::env::var(var_name)
-            .map_err(|_| miette::miette!("Environment variable '{var_name}' not set"))
+            .map_err(|_| miette::miette!("Environment variable '{var_name}' not set"))?
     } else {
-        Ok(url.to_string())
+        url.to_string()
+    };
+    Ok(normalize_sqlite_url_for_cli(&resolved))
+}
+
+/// Transform `file:` URLs into `sqlite:` URLs with `mode=rwc` so sqlx can
+/// connect and auto-create the database file.
+fn normalize_sqlite_url_for_cli(url: &str) -> String {
+    if let Some(path) = url.strip_prefix("file:") {
+        let sqlite_url = format!("sqlite:{}", path);
+        if sqlite_url.contains("mode=") {
+            sqlite_url
+        } else if sqlite_url.contains('?') {
+            format!("{}&mode=rwc", sqlite_url)
+        } else {
+            format!("{}?mode=rwc", sqlite_url)
+        }
+    } else {
+        url.to_string()
     }
 }

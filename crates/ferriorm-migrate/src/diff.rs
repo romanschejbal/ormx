@@ -7,7 +7,7 @@
 
 use ferriorm_core::schema::*;
 use ferriorm_core::utils::to_snake_case;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A single atomic change between two schema versions.
 #[derive(Debug, Clone)]
@@ -112,7 +112,122 @@ pub fn diff_schemas(
     diff_foreign_keys(&from.models, &to.models, &mut steps);
     diff_indexes(&from.models, &to.models, &mut steps);
 
-    steps
+    sort_steps(steps)
+}
+
+/// Reorder migration steps so that `CreateTable` statements respect
+/// foreign-key dependencies (tables referenced by other tables come first).
+/// Other step types keep their relative order; `AddForeignKey` and
+/// `CreateIndex` steps are placed after all `CreateTable` steps so they
+/// don't reference tables that haven't been created yet.
+fn sort_steps(steps: Vec<MigrationStep>) -> Vec<MigrationStep> {
+    // Partition into CreateTable, AddForeignKey, post-create steps
+    // (indexes, unique constraints), and everything else.
+    let mut create_tables: Vec<CreateTable> = Vec::new();
+    let mut add_fks: Vec<ForeignKeyDef> = Vec::new();
+    let mut post_create: Vec<MigrationStep> = Vec::new();
+    let mut other: Vec<MigrationStep> = Vec::new();
+
+    // Collect the set of tables being created so we know which indexes
+    // must be deferred.
+    let created_table_names: HashSet<String> = steps
+        .iter()
+        .filter_map(|s| match s {
+            MigrationStep::CreateTable(ct) => Some(ct.name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    for step in steps {
+        match step {
+            MigrationStep::CreateTable(ct) => create_tables.push(ct),
+            MigrationStep::AddForeignKey(fk) => add_fks.push(fk),
+            // Indexes and unique constraints on tables being created in this
+            // migration must come after the CREATE TABLE.
+            MigrationStep::CreateIndex { ref table, .. }
+            | MigrationStep::AddUniqueConstraint { ref table, .. }
+                if created_table_names.contains(table) =>
+            {
+                post_create.push(step);
+            }
+            s => other.push(s),
+        }
+    }
+
+    // Build a dependency graph among the CreateTable steps based on
+    // AddForeignKey relationships: table A depends on table B if there is
+    // a FK from A referencing B (and B is also being created).
+    let table_names: HashSet<String> = create_tables.iter().map(|ct| ct.name.clone()).collect();
+
+    // adjacency: table -> set of tables it depends on (owned Strings to
+    // avoid borrowing create_tables while we sort it later).
+    let mut deps: HashMap<String, HashSet<String>> = HashMap::new();
+    for ct in &create_tables {
+        deps.entry(ct.name.clone()).or_default();
+    }
+    for fk in &add_fks {
+        if table_names.contains(&fk.table)
+            && table_names.contains(&fk.referenced_table)
+            && fk.table != fk.referenced_table
+        {
+            deps.entry(fk.table.clone())
+                .or_default()
+                .insert(fk.referenced_table.clone());
+        }
+    }
+
+    // Kahn's algorithm for topological sort.
+    let mut in_degree: HashMap<String, usize> = HashMap::new();
+    let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+    for (node, dep_set) in &deps {
+        in_degree.entry(node.clone()).or_insert(0);
+        for dep in dep_set {
+            in_degree.entry(dep.clone()).or_insert(0);
+            reverse.entry(dep.clone()).or_default().push(node.clone());
+        }
+        *in_degree.entry(node.clone()).or_insert(0) = dep_set.len();
+    }
+
+    let mut queue: VecDeque<String> = in_degree
+        .iter()
+        .filter(|(_, deg)| **deg == 0)
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    let mut sorted_names: Vec<String> = Vec::new();
+    while let Some(name) = queue.pop_front() {
+        sorted_names.push(name.clone());
+        if let Some(dependents) = reverse.get(&name) {
+            for dep in dependents {
+                if let Some(deg) = in_degree.get_mut(dep) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push_back(dep.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Build a name -> position map for ordering
+    let order: HashMap<&str, usize> = sorted_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), i))
+        .collect();
+
+    create_tables.sort_by_key(|ct| order.get(ct.name.as_str()).copied().unwrap_or(usize::MAX));
+
+    // Reassemble: other steps first (enums, alters, drops), then create
+    // tables in dependency order, then AddForeignKey steps, then indexes /
+    // unique constraints on newly-created tables.
+    let mut result: Vec<MigrationStep> =
+        Vec::with_capacity(other.len() + create_tables.len() + add_fks.len() + post_create.len());
+    result.extend(other);
+    result.extend(create_tables.into_iter().map(MigrationStep::CreateTable));
+    result.extend(add_fks.into_iter().map(MigrationStep::AddForeignKey));
+    result.extend(post_create);
+    result
 }
 
 fn diff_enums(from: &[Enum], to: &[Enum], steps: &mut Vec<MigrationStep>) {
