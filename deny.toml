@@ -1,0 +1,9 @@
+# Configuration for cargo-deny / cargo-audit
+# https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+# RUSTSEC-2023-0071: rsa crate timing sidechannel (Marvin Attack)
+# Transitive dependency via sqlx -> rustls -> rsa
+# No patch available upstream. We don't use RSA directly.
+# https://github.com/RustCrypto/RSA/issues/19
+ignore = ["RUSTSEC-2023-0071"]
