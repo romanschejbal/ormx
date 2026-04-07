@@ -170,19 +170,20 @@ ferriorm is in active development. Here is what's done and what's planned:
 - [x] Database introspection and `db pull`
 - [x] PostgreSQL support
 - [x] SQLite support
+- [x] Connection pooling configuration
+- [x] Raw SQL escape hatch (pool access + zero-bind helpers)
+- [x] `select()` for partial column loading
+- [x] Aggregate queries (avg, sum, min, max)
 
 ### Planned
 - [ ] Compile-time query verification (hybrid sqlx approach)
 - [ ] MySQL support
-- [ ] `select()` for partial column loading
 - [ ] Middleware/hooks (beforeCreate, afterUpdate)
 - [ ] Soft deletes
-- [ ] Raw SQL escape hatch
-- [ ] Aggregate queries (sum, avg, min, max, groupBy)
+- [ ] Aggregate groupBy
 - [ ] Cursor-based pagination
 - [ ] Schema formatting (`ferriorm format`)
 - [ ] LSP for .ferriorm files
-- [ ] Connection pooling configuration
 - [ ] Seeding support
 
 ## License
