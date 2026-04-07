@@ -1,0 +1,12 @@
+[book]
+title = "ferriorm"
+description = "A Prisma-inspired ORM for Rust — schema-first, type-safe, with automatic code generation."
+authors = ["Roman Schejbal"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/romanschejbal/ferriorm"
+edit-url-template = "https://github.com/romanschejbal/ferriorm/edit/main/docs/{path}"
