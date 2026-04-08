@@ -510,6 +510,15 @@ fn gen_actions(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
                 DeleteManyQuery { client: self.client, r#where }
             }
 
+            pub fn upsert(
+                &self,
+                r#where: filter::#where_unique,
+                create: data::#create_input,
+                update: data::#update_input,
+            ) -> UpsertQuery<'a> {
+                UpsertQuery { client: self.client, r#where, create, update }
+            }
+
             #aggregate_method
         }
     }
@@ -541,6 +550,7 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
     let insert_code = gen_insert_code(model, scalar_fields, table_name);
     let update_code = gen_update_code(model, scalar_fields, table_name);
     let update_many_code = gen_update_many_code(model, scalar_fields, table_name);
+    let upsert_code = gen_upsert_code(model, scalar_fields, table_name);
 
     quote! {
         // ── Generic helper: build ORDER BY clause ──────────────
@@ -834,6 +844,20 @@ fn gen_query_builders(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
             pub async fn exec(self) -> Result<u64, FerriormError> {
                 let client = self.client;
                 #update_many_code
+            }
+        }
+
+        pub struct UpsertQuery<'a> {
+            client: &'a DatabaseClient,
+            r#where: filter::#_where_unique,
+            create: data::#_create_input,
+            update: data::#_update_input,
+        }
+
+        impl<'a> UpsertQuery<'a> {
+            pub async fn exec(self) -> Result<#model_ident, FerriormError> {
+                let client = self.client;
+                #upsert_code
             }
         }
 
@@ -1176,6 +1200,163 @@ enum AggregateKind {
     Numeric,
     /// DateTime fields: min, max only
     DateTime,
+}
+
+// ─── UPSERT code generation ──────────────────────────────────
+
+fn gen_upsert_code(model: &Model, scalar_fields: &[&Field], table_name: &str) -> TokenStream {
+    // Collect primary key db_names for ON CONFLICT clause
+    let pk_db_names: Vec<String> = model
+        .primary_key
+        .fields
+        .iter()
+        .filter_map(|pk| {
+            model
+                .fields
+                .iter()
+                .find(|f| f.name == *pk || to_snake_case(&f.name) == *pk)
+                .map(|f| f.db_name.clone())
+        })
+        .collect();
+    let pk_conflict_cols = pk_db_names
+        .iter()
+        .map(|c| format!("\"{}\"", c))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // Required + optional + updatedAt fields for the INSERT part (same as gen_insert_code)
+    let required: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| !f.has_default() && !f.is_updated_at)
+        .collect();
+    let optional: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| f.has_default() && !f.is_updated_at)
+        .collect();
+    let updated_at: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| f.is_updated_at)
+        .collect();
+
+    let mut col_pushes = vec![];
+    let mut val_pushes = vec![];
+
+    for f in &required {
+        let db_name = &f.db_name;
+        let field_ident = format_ident!("{}", to_snake_case(&f.name));
+        col_pushes.push(quote! { cols.push(#db_name); });
+        val_pushes.push(quote! { sep.push_bind(self.create.#field_ident); });
+    }
+    for f in &optional {
+        let db_name = &f.db_name;
+        let field_ident = format_ident!("{}", to_snake_case(&f.name));
+        let default_expr = gen_default_expr(f, &f.field_type);
+        col_pushes.push(quote! { cols.push(#db_name); });
+        val_pushes.push(quote! {
+            let val = self.create.#field_ident.unwrap_or_else(|| #default_expr);
+            sep.push_bind(val);
+        });
+    }
+    for f in &updated_at {
+        let db_name = &f.db_name;
+        col_pushes.push(quote! { cols.push(#db_name); });
+        val_pushes.push(quote! { sep.push_bind(chrono::Utc::now()); });
+    }
+
+    // Updatable fields for the DO UPDATE SET part
+    let updatable: Vec<&Field> = scalar_fields
+        .iter()
+        .copied()
+        .filter(|f| !f.is_id && !f.is_updated_at)
+        .collect();
+
+    let set_arms: Vec<TokenStream> = updatable
+        .iter()
+        .map(|f| {
+            let field_ident = format_ident!("{}", to_snake_case(&f.name));
+            let db_name = &f.db_name;
+            quote! {
+                if let Some(SetValue::Set(v)) = self.update.#field_ident {
+                    if !first_set { qb.push(", "); }
+                    first_set = false;
+                    qb.push(concat!("\"", #db_name, "\" = "));
+                    qb.push_bind(v);
+                }
+            }
+        })
+        .collect();
+
+    let updated_at_set: Vec<TokenStream> = updated_at
+        .iter()
+        .map(|f| {
+            let db_name = &f.db_name;
+            quote! {
+                if !first_set { qb.push(", "); }
+                first_set = false;
+                qb.push(concat!("\"", #db_name, "\" = "));
+                qb.push_bind(chrono::Utc::now());
+            }
+        })
+        .collect();
+
+    let insert_start = format!(r#"INSERT INTO "{}""#, table_name);
+    let conflict_clause = format!(" ON CONFLICT ({}) DO UPDATE SET ", pk_conflict_cols);
+    let noop_set = format!(
+        r#""{}" = "{}""#,
+        pk_db_names.first().unwrap_or(&"id".to_string()),
+        pk_db_names.first().unwrap_or(&"id".to_string()),
+    );
+
+    quote! {
+        macro_rules! build_upsert {
+            ($qb_type:ty) => {{
+                let mut cols: Vec<&str> = Vec::new();
+                #(#col_pushes)*
+
+                let mut qb = sqlx::QueryBuilder::<$qb_type>::new(#insert_start);
+                qb.push(" (");
+                for (i, col) in cols.iter().enumerate() {
+                    if i > 0 { qb.push(", "); }
+                    qb.push("\"");
+                    qb.push(*col);
+                    qb.push("\"");
+                }
+                qb.push(") VALUES (");
+                {
+                    let mut sep = qb.separated(", ");
+                    #(#val_pushes)*
+                }
+                qb.push(")");
+                qb.push(#conflict_clause);
+
+                let mut first_set = true;
+                #(#set_arms)*
+                #(#updated_at_set)*
+
+                if first_set {
+                    // No update fields specified — use a no-op update on the PK
+                    qb.push(#noop_set);
+                }
+
+                qb.push(" RETURNING *");
+                qb
+            }};
+        }
+
+        match client {
+            DatabaseClient::Postgres(_) => {
+                let qb = build_upsert!(sqlx::Postgres);
+                client.fetch_one_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let qb = build_upsert!(sqlx::Sqlite);
+                client.fetch_one_sqlite(qb).await
+            }
+        }
+    }
 }
 
 fn gen_aggregate_types(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
