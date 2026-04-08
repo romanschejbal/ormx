@@ -1,6 +1,7 @@
+#![allow(clippy::pedantic)]
+
 mod generated;
 
-use ferriorm_runtime::prelude::*;
 use generated::FerriormClient;
 
 #[tokio::main]
@@ -45,10 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let users_with_posts = client
         .user()
         .find_many(generated::user::filter::UserWhereInput::default())
-        .include(generated::user::UserInclude {
-            posts: true,
-            ..Default::default()
-        })
+        .include(generated::user::UserInclude { posts: true })
         .exec()
         .await?;
 
@@ -56,28 +54,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "User: {} has {} posts",
             u.data.email,
-            u.posts.as_ref().map(|p| p.len()).unwrap_or(0)
+            u.posts.as_ref().map_or(0, Vec::len)
         );
     }
 
     // ─── FIND UNIQUE with include ──────────────────────────
-    let user_with_posts = client
+    let found = client
         .user()
         .find_unique(generated::user::filter::UserWhereUniqueInput::Email(
             "alice@example.com".into(),
         ))
-        .include(generated::user::UserInclude {
-            posts: true,
-            ..Default::default()
-        })
+        .include(generated::user::UserInclude { posts: true })
         .exec()
         .await?;
 
-    if let Some(u) = &user_with_posts {
+    if let Some(u) = &found {
         println!(
             "Found: {} with {:?} posts",
             u.data.email,
-            u.posts.as_ref().map(|p| p.len())
+            u.posts.as_ref().map(Vec::len)
         );
     }
 
