@@ -444,30 +444,51 @@ fn diff_indexes(from: &[Model], to: &[Model], steps: &mut Vec<MigrationStep>) {
     let to_map: HashMap<&str, &Model> = to.iter().map(|m| (m.db_name.as_str(), m)).collect();
 
     for (name, to_model) in &to_map {
-        let from_indexes: Vec<&Index> = from_map
+        // Resolve `from` indexes to db column names (for comparison).
+        // Introspected indexes already have db column names.
+        let from_indexes_normalized: Vec<Vec<String>> = from_map
             .get(name)
-            .map(|m| m.indexes.iter().collect())
+            .map(|m| {
+                m.indexes
+                    .iter()
+                    .map(|idx| resolve_index_columns(&idx.fields, m))
+                    .collect()
+            })
             .unwrap_or_default();
 
         for idx in &to_model.indexes {
-            let idx_name = format!(
-                "idx_{}_{}",
-                name,
-                idx.fields
-                    .iter()
-                    .map(|f| to_snake_case(f))
-                    .collect::<Vec<_>>()
-                    .join("_")
-            );
-            if !from_indexes.iter().any(|fi| fi.fields == idx.fields) {
+            // Resolve to db column names by looking up each field on the model.
+            let to_index_cols = resolve_index_columns(&idx.fields, to_model);
+
+            let idx_name = format!("idx_{}_{}", name, to_index_cols.join("_"));
+
+            if !from_indexes_normalized
+                .iter()
+                .any(|fi| fi == &to_index_cols)
+            {
                 steps.push(MigrationStep::CreateIndex {
                     table: (*name).to_string(),
                     name: idx_name,
-                    columns: idx.fields.iter().map(|f| to_snake_case(f)).collect(),
+                    columns: to_index_cols,
                 });
             }
         }
     }
+}
+
+/// Resolve a list of field names (schema names) to database column names by
+/// looking them up in the model. Falls back to snake_case if a field isn't found.
+fn resolve_index_columns(field_names: &[String], model: &Model) -> Vec<String> {
+    field_names
+        .iter()
+        .map(|name| {
+            model
+                .fields
+                .iter()
+                .find(|f| f.name == *name || to_snake_case(&f.name) == *name)
+                .map_or_else(|| to_snake_case(name), |f| f.db_name.clone())
+        })
+        .collect()
 }
 
 // ─── Helpers ──────────────────────────────────────────────────

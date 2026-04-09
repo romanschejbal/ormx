@@ -450,6 +450,69 @@ fn diff_add_index() {
     assert!(sql.contains("\"email\""));
 }
 
+/// Regression for "indexes re-emitted in every migration diff".
+/// The shadow DB introspection produces indexes with db column names
+/// (snake_case), while the parser produces them with schema field names
+/// (camelCase). The diff must normalize both sides before comparing.
+#[test]
+fn diff_index_not_re_emitted_when_unchanged() {
+    // `from` simulates the shadow DB introspection result: db column names.
+    let from = make_schema(
+        vec![{
+            let mut m = make_model(
+                "Snapshot",
+                "snapshots",
+                vec![
+                    make_field("id", ScalarType::String, true),
+                    make_field("username", ScalarType::String, false),
+                    make_field("capturedAt", ScalarType::DateTime, false),
+                ],
+            );
+            // Introspection gives db column names
+            m.indexes = vec![Index {
+                fields: vec!["username".into(), "captured_at".into()],
+            }];
+            m
+        }],
+        vec![],
+    );
+
+    // `to` is the parsed .ferriorm schema: camelCase field names.
+    let to = make_schema(
+        vec![{
+            let mut m = make_model(
+                "Snapshot",
+                "snapshots",
+                vec![
+                    make_field("id", ScalarType::String, true),
+                    make_field("username", ScalarType::String, false),
+                    make_field("capturedAt", ScalarType::DateTime, false),
+                ],
+            );
+            // Parser gives schema field names
+            m.indexes = vec![Index {
+                fields: vec!["username".into(), "capturedAt".into()],
+            }];
+            m
+        }],
+        vec![],
+    );
+
+    let steps = diff::diff_schemas(&from, &to, DatabaseProvider::SQLite);
+
+    // Should NOT produce a CreateIndex step — the index already exists.
+    let create_index_steps: Vec<_> = steps
+        .iter()
+        .filter(|s| matches!(s, MigrationStep::CreateIndex { .. }))
+        .collect();
+
+    assert!(
+        create_index_steps.is_empty(),
+        "Index with mixed name conventions should be detected as unchanged. \
+         Got steps: {steps:?}"
+    );
+}
+
 #[test]
 fn diff_add_foreign_key() {
     let user_model = make_model(
