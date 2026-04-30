@@ -85,6 +85,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("Total users: {count}");
 
+    // ─── GROUP BY with HAVING ──────────────────────────────
+    // Count posts per author, keeping only authors with >= 1 post.
+    let buckets = client
+        .post()
+        .group_by(vec![generated::post::PostGroupByField::AuthorId])
+        .count()
+        .having(generated::post::PostHavingInput {
+            count: Some(ferriorm_runtime::filter::BigIntFilter {
+                gte: Some(1),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .exec()
+        .await?;
+    for b in &buckets {
+        println!(
+            "author_id={:?} posts={:?}",
+            b.author_id, b.count
+        );
+    }
+
     // Cleanup
     client
         .post()

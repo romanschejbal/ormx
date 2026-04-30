@@ -82,15 +82,24 @@ pub mod filter {
                 }
                 if let Some(v) = &filter.contains {
                     qb.push(concat!(" AND \"", "id", "\" LIKE "));
-                    qb.push_bind(format!("%{}%", v));
+                    qb.push_bind(
+                        format!("%{}%", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
                 if let Some(v) = &filter.starts_with {
                     qb.push(concat!(" AND \"", "id", "\" LIKE "));
-                    qb.push_bind(format!("{}%", v));
+                    qb.push_bind(
+                        format!("{}%", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
                 if let Some(v) = &filter.ends_with {
                     qb.push(concat!(" AND \"", "id", "\" LIKE "));
-                    qb.push_bind(format!("%{}", v));
+                    qb.push_bind(
+                        format!("%{}", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
             }
             if let Some(filter) = &self.title {
@@ -104,15 +113,24 @@ pub mod filter {
                 }
                 if let Some(v) = &filter.contains {
                     qb.push(concat!(" AND \"", "title", "\" LIKE "));
-                    qb.push_bind(format!("%{}%", v));
+                    qb.push_bind(
+                        format!("%{}%", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
                 if let Some(v) = &filter.starts_with {
                     qb.push(concat!(" AND \"", "title", "\" LIKE "));
-                    qb.push_bind(format!("{}%", v));
+                    qb.push_bind(
+                        format!("{}%", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
                 if let Some(v) = &filter.ends_with {
                     qb.push(concat!(" AND \"", "title", "\" LIKE "));
-                    qb.push_bind(format!("%{}", v));
+                    qb.push_bind(
+                        format!("%{}", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
             }
             if let Some(filter) = &self.content {
@@ -140,15 +158,24 @@ pub mod filter {
                 }
                 if let Some(v) = &filter.contains {
                     qb.push(concat!(" AND \"", "content", "\" LIKE "));
-                    qb.push_bind(format!("%{}%", v));
+                    qb.push_bind(
+                        format!("%{}%", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
                 if let Some(v) = &filter.starts_with {
                     qb.push(concat!(" AND \"", "content", "\" LIKE "));
-                    qb.push_bind(format!("{}%", v));
+                    qb.push_bind(
+                        format!("{}%", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
                 if let Some(v) = &filter.ends_with {
                     qb.push(concat!(" AND \"", "content", "\" LIKE "));
-                    qb.push_bind(format!("%{}", v));
+                    qb.push_bind(
+                        format!("%{}", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
             }
             if let Some(filter) = &self.published {
@@ -198,15 +225,24 @@ pub mod filter {
                 }
                 if let Some(v) = &filter.contains {
                     qb.push(concat!(" AND \"", "author_id", "\" LIKE "));
-                    qb.push_bind(format!("%{}%", v));
+                    qb.push_bind(
+                        format!("%{}%", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
                 if let Some(v) = &filter.starts_with {
                     qb.push(concat!(" AND \"", "author_id", "\" LIKE "));
-                    qb.push_bind(format!("{}%", v));
+                    qb.push_bind(
+                        format!("{}%", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
                 if let Some(v) = &filter.ends_with {
                     qb.push(concat!(" AND \"", "author_id", "\" LIKE "));
-                    qb.push_bind(format!("%{}", v));
+                    qb.push_bind(
+                        format!("%{}", ferriorm_runtime::filter::like_escape(v)),
+                    );
+                    qb.push(" ESCAPE '\\'");
                 }
             }
             if let Some(filter) = &self.created_at {
@@ -539,6 +575,16 @@ impl<'a> PostActions<'a> {
             client: self.client,
             r#where,
             ops: vec![],
+        }
+    }
+    pub fn group_by(&self, keys: Vec<PostGroupByField>) -> GroupByQuery<'a> {
+        GroupByQuery {
+            client: self.client,
+            r#where: filter::PostWhereInput::default(),
+            group_keys: keys,
+            agg_ops: vec![],
+            count: false,
+            having: None,
         }
     }
 }
@@ -1311,6 +1357,475 @@ impl<'a> AggregateQuery<'a> {
                 let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(&base_sql);
                 self.r#where.build_where(&mut qb);
                 self.client.fetch_one_sqlite(qb).await
+            }
+        }
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub enum PostGroupByField {
+    Id,
+    Title,
+    Content,
+    Published,
+    Status,
+    ViewCount,
+    AuthorId,
+    CreatedAt,
+    UpdatedAt,
+}
+impl PostGroupByField {
+    pub fn db_name(&self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Title => "title",
+            Self::Content => "content",
+            Self::Published => "published",
+            Self::Status => "status",
+            Self::ViewCount => "view_count",
+            Self::AuthorId => "author_id",
+            Self::CreatedAt => "created_at",
+            Self::UpdatedAt => "updated_at",
+        }
+    }
+    fn alias(&self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Title => "title",
+            Self::Content => "content",
+            Self::Published => "published",
+            Self::Status => "status",
+            Self::ViewCount => "view_count",
+            Self::AuthorId => "author_id",
+            Self::CreatedAt => "created_at",
+            Self::UpdatedAt => "updated_at",
+        }
+    }
+}
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct PostGroupByResult {
+    #[sqlx(default)]
+    pub id: Option<String>,
+    #[sqlx(default)]
+    pub title: Option<String>,
+    #[sqlx(default)]
+    pub content: Option<String>,
+    #[sqlx(default)]
+    pub published: Option<bool>,
+    #[sqlx(default)]
+    pub status: Option<super::enums::PostStatus>,
+    #[sqlx(default)]
+    pub view_count: Option<i64>,
+    #[sqlx(default)]
+    pub author_id: Option<String>,
+    #[sqlx(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[sqlx(default)]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[sqlx(default)]
+    pub count: Option<i64>,
+    #[sqlx(default)]
+    pub avg_view_count: Option<f64>,
+    #[sqlx(default)]
+    pub sum_view_count: Option<f64>,
+    #[sqlx(default)]
+    pub min_view_count: Option<i64>,
+    #[sqlx(default)]
+    pub max_view_count: Option<i64>,
+    #[sqlx(default)]
+    pub min_created_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[sqlx(default)]
+    pub max_created_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[sqlx(default)]
+    pub min_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[sqlx(default)]
+    pub max_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+#[derive(Debug, Clone, Default)]
+pub struct PostHavingInput {
+    pub count: Option<ferriorm_runtime::filter::BigIntFilter>,
+    pub avg_view_count: Option<ferriorm_runtime::filter::FloatFilter>,
+    pub sum_view_count: Option<ferriorm_runtime::filter::FloatFilter>,
+    pub min_view_count: Option<ferriorm_runtime::filter::BigIntFilter>,
+    pub max_view_count: Option<ferriorm_runtime::filter::BigIntFilter>,
+    pub min_created_at: Option<ferriorm_runtime::filter::DateTimeFilter>,
+    pub max_created_at: Option<ferriorm_runtime::filter::DateTimeFilter>,
+    pub min_updated_at: Option<ferriorm_runtime::filter::DateTimeFilter>,
+    pub max_updated_at: Option<ferriorm_runtime::filter::DateTimeFilter>,
+    pub and: Option<Vec<PostHavingInput>>,
+    pub or: Option<Vec<PostHavingInput>>,
+    pub not: Option<Box<PostHavingInput>>,
+}
+impl PostHavingInput {
+    pub(crate) fn build_having<'args, DB: sqlx::Database>(
+        &self,
+        qb: &mut sqlx::QueryBuilder<'args, DB>,
+    )
+    where
+        i64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        String: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        Option<String>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        bool: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        Option<bool>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        i32: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        Option<i32>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        chrono::DateTime<chrono::Utc>: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        Option<
+            chrono::DateTime<chrono::Utc>,
+        >: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+        f64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB>,
+    {
+        if let Some(filter) = &self.count {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND COUNT(*) = ");
+                qb.push_bind(*v);
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND COUNT(*) != ");
+                qb.push_bind(*v);
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND COUNT(*) > ");
+                qb.push_bind(*v);
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND COUNT(*) >= ");
+                qb.push_bind(*v);
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND COUNT(*) < ");
+                qb.push_bind(*v);
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND COUNT(*) <= ");
+                qb.push_bind(*v);
+            }
+        }
+        if let Some(filter) = &self.avg_view_count {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND AVG(\"view_count\") = ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND AVG(\"view_count\") != ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND AVG(\"view_count\") > ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND AVG(\"view_count\") >= ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND AVG(\"view_count\") < ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND AVG(\"view_count\") <= ");
+                qb.push_bind(v.clone());
+            }
+        }
+        if let Some(filter) = &self.sum_view_count {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND SUM(\"view_count\") = ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND SUM(\"view_count\") != ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND SUM(\"view_count\") > ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND SUM(\"view_count\") >= ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND SUM(\"view_count\") < ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND SUM(\"view_count\") <= ");
+                qb.push_bind(v.clone());
+            }
+        }
+        if let Some(filter) = &self.min_view_count {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND MIN(\"view_count\") = ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND MIN(\"view_count\") != ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND MIN(\"view_count\") > ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND MIN(\"view_count\") >= ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND MIN(\"view_count\") < ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND MIN(\"view_count\") <= ");
+                qb.push_bind(v.clone());
+            }
+        }
+        if let Some(filter) = &self.max_view_count {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND MAX(\"view_count\") = ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND MAX(\"view_count\") != ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND MAX(\"view_count\") > ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND MAX(\"view_count\") >= ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND MAX(\"view_count\") < ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND MAX(\"view_count\") <= ");
+                qb.push_bind(v.clone());
+            }
+        }
+        if let Some(filter) = &self.min_created_at {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND MIN(\"created_at\") = ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND MIN(\"created_at\") != ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND MIN(\"created_at\") > ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND MIN(\"created_at\") >= ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND MIN(\"created_at\") < ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND MIN(\"created_at\") <= ");
+                qb.push_bind(v.clone());
+            }
+        }
+        if let Some(filter) = &self.max_created_at {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND MAX(\"created_at\") = ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND MAX(\"created_at\") != ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND MAX(\"created_at\") > ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND MAX(\"created_at\") >= ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND MAX(\"created_at\") < ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND MAX(\"created_at\") <= ");
+                qb.push_bind(v.clone());
+            }
+        }
+        if let Some(filter) = &self.min_updated_at {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND MIN(\"updated_at\") = ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND MIN(\"updated_at\") != ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND MIN(\"updated_at\") > ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND MIN(\"updated_at\") >= ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND MIN(\"updated_at\") < ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND MIN(\"updated_at\") <= ");
+                qb.push_bind(v.clone());
+            }
+        }
+        if let Some(filter) = &self.max_updated_at {
+            if let Some(v) = &filter.equals {
+                qb.push(" AND MAX(\"updated_at\") = ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.not {
+                qb.push(" AND MAX(\"updated_at\") != ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gt {
+                qb.push(" AND MAX(\"updated_at\") > ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.gte {
+                qb.push(" AND MAX(\"updated_at\") >= ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lt {
+                qb.push(" AND MAX(\"updated_at\") < ");
+                qb.push_bind(v.clone());
+            }
+            if let Some(v) = &filter.lte {
+                qb.push(" AND MAX(\"updated_at\") <= ");
+                qb.push_bind(v.clone());
+            }
+        }
+        if let Some(conditions) = &self.and {
+            for c in conditions {
+                c.build_having(qb);
+            }
+        }
+        if let Some(conditions) = &self.or {
+            if !conditions.is_empty() {
+                qb.push(" AND (");
+                for (i, c) in conditions.iter().enumerate() {
+                    if i > 0 {
+                        qb.push(" OR ");
+                    }
+                    qb.push("(1=1");
+                    c.build_having(qb);
+                    qb.push(")");
+                }
+                qb.push(")");
+            }
+        }
+        if let Some(c) = &self.not {
+            qb.push(" AND NOT (1=1");
+            c.build_having(qb);
+            qb.push(")");
+        }
+    }
+}
+pub struct GroupByQuery<'a> {
+    client: &'a DatabaseClient,
+    r#where: filter::PostWhereInput,
+    group_keys: Vec<PostGroupByField>,
+    agg_ops: Vec<(&'static str, &'static str, &'static str)>,
+    count: bool,
+    having: Option<PostHavingInput>,
+}
+impl<'a> GroupByQuery<'a> {
+    pub fn r#where(mut self, r#where: filter::PostWhereInput) -> Self {
+        self.r#where = r#where;
+        self
+    }
+    pub fn count(mut self) -> Self {
+        self.count = true;
+        self
+    }
+    pub fn avg(mut self, field: PostAggregateField) -> Self {
+        assert!(field.is_numeric(), "avg() is only supported on numeric fields");
+        let db_name = field.db_name();
+        let alias = field.alias("avg");
+        self.agg_ops.push(("AVG", db_name, alias));
+        self
+    }
+    pub fn sum(mut self, field: PostAggregateField) -> Self {
+        assert!(field.is_numeric(), "sum() is only supported on numeric fields");
+        let db_name = field.db_name();
+        let alias = field.alias("sum");
+        self.agg_ops.push(("SUM", db_name, alias));
+        self
+    }
+    pub fn min(mut self, field: PostAggregateField) -> Self {
+        let db_name = field.db_name();
+        let alias = field.alias("min");
+        self.agg_ops.push(("MIN", db_name, alias));
+        self
+    }
+    pub fn max(mut self, field: PostAggregateField) -> Self {
+        let db_name = field.db_name();
+        let alias = field.alias("max");
+        self.agg_ops.push(("MAX", db_name, alias));
+        self
+    }
+    pub fn having(mut self, having: PostHavingInput) -> Self {
+        self.having = Some(having);
+        self
+    }
+    pub async fn exec(self) -> Result<Vec<PostGroupByResult>, FerriormError> {
+        if self.group_keys.is_empty() {
+            return Err(
+                FerriormError::Query("group_by() requires at least one group key".into()),
+            );
+        }
+        let mut selections: Vec<String> = self
+            .group_keys
+            .iter()
+            .map(|k| format!(r#""{}" as "{}""#, k.db_name(), k.alias()))
+            .collect();
+        if self.count {
+            selections.push(r#"COUNT(*) as "count""#.to_string());
+        }
+        for (func, col, alias) in &self.agg_ops {
+            selections.push(format!(r#"{}("{}") as "{}""#, func, col, alias));
+        }
+        let group_by_clause: Vec<String> = self
+            .group_keys
+            .iter()
+            .map(|k| format!(r#""{}""#, k.db_name()))
+            .collect();
+        let base_sql = format!(
+            r#"SELECT {} FROM "{}" WHERE 1=1"#, selections.join(", "), "posts",
+        );
+        match self.client {
+            DatabaseClient::Postgres(_) => {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(&base_sql);
+                self.r#where.build_where(&mut qb);
+                qb.push(format!(" GROUP BY {}", group_by_clause.join(", ")));
+                if let Some(h) = &self.having {
+                    qb.push(" HAVING 1=1");
+                    h.build_having(&mut qb);
+                }
+                self.client.fetch_all_pg(qb).await
+            }
+            DatabaseClient::Sqlite(_) => {
+                let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(&base_sql);
+                self.r#where.build_where(&mut qb);
+                qb.push(format!(" GROUP BY {}", group_by_clause.join(", ")));
+                if let Some(h) = &self.having {
+                    qb.push(" HAVING 1=1");
+                    h.build_having(&mut qb);
+                }
+                self.client.fetch_all_sqlite(qb).await
             }
         }
     }

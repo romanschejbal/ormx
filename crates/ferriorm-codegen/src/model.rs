@@ -31,6 +31,7 @@ pub fn generate_model_module(model: &Model) -> TokenStream {
     let actions_struct = gen_actions(model, &scalar_fields);
     let query_builders = gen_query_builders(model, &scalar_fields);
     let aggregate_types = gen_aggregate_types(model, &scalar_fields);
+    let groupby_types = gen_groupby_types(model, &scalar_fields);
     let select_types = gen_select_types(model, &scalar_fields);
 
     quote! {
@@ -49,6 +50,7 @@ pub fn generate_model_module(model: &Model) -> TokenStream {
         #actions_struct
         #query_builders
         #aggregate_types
+        #groupby_types
         #select_types
     }
 }
@@ -638,6 +640,26 @@ fn gen_actions(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
         quote! {}
     };
 
+    // Only generate group_by() if there are groupable fields
+    let has_group_fields = scalar_fields.iter().any(|f| is_groupable(f));
+    let groupby_field_name = format_ident!("{}GroupByField", model.name);
+    let group_by_method = if has_group_fields {
+        quote! {
+            pub fn group_by(&self, keys: Vec<#groupby_field_name>) -> GroupByQuery<'a> {
+                GroupByQuery {
+                    client: self.client,
+                    r#where: filter::#where_input::default(),
+                    group_keys: keys,
+                    agg_ops: vec![],
+                    count: false,
+                    having: None,
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         pub struct #actions_name<'a> {
             client: &'a DatabaseClient,
@@ -703,6 +725,8 @@ fn gen_actions(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
             }
 
             #aggregate_method
+
+            #group_by_method
         }
     }
 }
@@ -1989,6 +2013,449 @@ fn gen_aggregate_types(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
                         let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(&base_sql);
                         self.r#where.build_where(&mut qb);
                         self.client.fetch_one_sqlite(qb).await
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─── GroupBy Types ────────────────────────────────────────────
+
+/// Generate the six standard-comparable HAVING arms (`equals`/`not`/`gt`/
+/// `gte`/`lt`/`lte`) for one aggregate field. `lhs` is the SQL expression on
+/// the left-hand side of the operator (e.g. `AVG("age")`, `MIN("created_at")`).
+fn gen_having_comparable_arms(field_ident: &proc_macro2::Ident, lhs: &str) -> TokenStream {
+    let eq = format!(" AND {lhs} = ");
+    let ne = format!(" AND {lhs} != ");
+    let gt = format!(" AND {lhs} > ");
+    let gte = format!(" AND {lhs} >= ");
+    let lt = format!(" AND {lhs} < ");
+    let lte = format!(" AND {lhs} <= ");
+    quote! {
+        if let Some(filter) = &self.#field_ident {
+            if let Some(v) = &filter.equals { qb.push(#eq); qb.push_bind(v.clone()); }
+            if let Some(v) = &filter.not    { qb.push(#ne); qb.push_bind(v.clone()); }
+            if let Some(v) = &filter.gt     { qb.push(#gt); qb.push_bind(v.clone()); }
+            if let Some(v) = &filter.gte    { qb.push(#gte); qb.push_bind(v.clone()); }
+            if let Some(v) = &filter.lt     { qb.push(#lt); qb.push_bind(v.clone()); }
+            if let Some(v) = &filter.lte    { qb.push(#lte); qb.push_bind(v.clone()); }
+        }
+    }
+}
+
+/// True for fields that can appear in a `GROUP BY` clause: any scalar except
+/// `Json`/`Bytes`/`Decimal` (which are not orderable / hashable in SQL), plus
+/// enums. Optional fields are still groupable -- `NULL` becomes its own
+/// bucket.
+fn is_groupable(field: &Field) -> bool {
+    match &field.field_type {
+        FieldKind::Scalar(
+            ScalarType::String
+            | ScalarType::Int
+            | ScalarType::BigInt
+            | ScalarType::Float
+            | ScalarType::Boolean
+            | ScalarType::DateTime,
+        )
+        | FieldKind::Enum(_) => true,
+        FieldKind::Scalar(ScalarType::Json | ScalarType::Bytes | ScalarType::Decimal)
+        | FieldKind::Model(_) => false,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn gen_groupby_types(model: &Model, scalar_fields: &[&Field]) -> TokenStream {
+    let groupby_field_name = format_ident!("{}GroupByField", model.name);
+    let groupby_result_name = format_ident!("{}GroupByResult", model.name);
+    let having_input_name = format_ident!("{}HavingInput", model.name);
+    let aggregate_field_name = format_ident!("{}AggregateField", model.name);
+    let where_input = format_ident!("{}WhereInput", model.name);
+    let table_name = &model.db_name;
+
+    // Reuse the same aggregate-field collection as gen_aggregate_types so the
+    // result struct columns and HAVING surface stay consistent.
+    let agg_fields: Vec<(&Field, AggregateKind)> = scalar_fields
+        .iter()
+        .filter_map(|f| match &f.field_type {
+            FieldKind::Scalar(ScalarType::Int | ScalarType::BigInt | ScalarType::Float) => {
+                Some((*f, AggregateKind::Numeric))
+            }
+            FieldKind::Scalar(ScalarType::DateTime) => Some((*f, AggregateKind::DateTime)),
+            _ => None,
+        })
+        .collect();
+
+    let group_fields: Vec<&Field> = scalar_fields
+        .iter()
+        .filter(|f| is_groupable(f))
+        .copied()
+        .collect();
+
+    if group_fields.is_empty() {
+        return quote! {};
+    }
+
+    // ── <Model>GroupByField enum ──────────────────────────────
+    let groupby_variants: Vec<TokenStream> = group_fields
+        .iter()
+        .map(|f| {
+            let variant = format_ident!("{}", to_pascal_case(&f.name));
+            quote! { #variant }
+        })
+        .collect();
+
+    let groupby_db_arms: Vec<TokenStream> = group_fields
+        .iter()
+        .map(|f| {
+            let variant = format_ident!("{}", to_pascal_case(&f.name));
+            let db_name = &f.db_name;
+            quote! { Self::#variant => #db_name }
+        })
+        .collect();
+
+    let groupby_alias_arms: Vec<TokenStream> = group_fields
+        .iter()
+        .map(|f| {
+            let variant = format_ident!("{}", to_pascal_case(&f.name));
+            let alias = to_snake_case(&f.name);
+            quote! { Self::#variant => #alias }
+        })
+        .collect();
+
+    // ── <Model>GroupByResult fields ───────────────────────────
+    // One Option<T> per groupable field (only filled when that field is in
+    // the active group key set), then count, then the same avg/sum/min/max
+    // columns that gen_aggregate_types emits.
+    let mut result_fields: Vec<TokenStream> = Vec::new();
+    for f in &group_fields {
+        let snake = to_snake_case(&f.name);
+        let name = format_ident!("{}", snake);
+        // Always wrap in Option so the same struct serves every group_by call.
+        let base_ty = rust_type_tokens(
+            &Field {
+                is_optional: false,
+                ..(*f).clone()
+            },
+            ModuleDepth::TopLevel,
+        );
+        result_fields.push(quote! { #[sqlx(default)] pub #name: Option<#base_ty> });
+    }
+    result_fields.push(quote! { #[sqlx(default)] pub count: Option<i64> });
+    for (f, kind) in &agg_fields {
+        let snake = to_snake_case(&f.name);
+        let orig_ty = rust_type_tokens(
+            &Field {
+                is_optional: false,
+                ..(*f).clone()
+            },
+            ModuleDepth::TopLevel,
+        );
+        match kind {
+            AggregateKind::Numeric => {
+                let avg_name = format_ident!("avg_{}", snake);
+                let sum_name = format_ident!("sum_{}", snake);
+                let min_name = format_ident!("min_{}", snake);
+                let max_name = format_ident!("max_{}", snake);
+                result_fields.push(quote! { #[sqlx(default)] pub #avg_name: Option<f64> });
+                result_fields.push(quote! { #[sqlx(default)] pub #sum_name: Option<f64> });
+                result_fields.push(quote! { #[sqlx(default)] pub #min_name: Option<#orig_ty> });
+                result_fields.push(quote! { #[sqlx(default)] pub #max_name: Option<#orig_ty> });
+            }
+            AggregateKind::DateTime => {
+                let min_name = format_ident!("min_{}", snake);
+                let max_name = format_ident!("max_{}", snake);
+                result_fields.push(quote! { #[sqlx(default)] pub #min_name: Option<#orig_ty> });
+                result_fields.push(quote! { #[sqlx(default)] pub #max_name: Option<#orig_ty> });
+            }
+        }
+    }
+
+    // ── <Model>HavingInput fields ─────────────────────────────
+    // Filtering on aggregate expressions: COUNT(*), AVG/SUM/MIN/MAX of each
+    // aggregatable column. RHS reuses the same scalar filter types as
+    // WhereInput.
+    let mut having_fields: Vec<TokenStream> = Vec::new();
+    // COUNT(*) returns BIGINT in both Postgres and SQLite -> BigIntFilter.
+    having_fields.push(quote! { pub count: Option<ferriorm_runtime::filter::BigIntFilter> });
+    for (f, kind) in &agg_fields {
+        let snake = to_snake_case(&f.name);
+        let avg_name = format_ident!("avg_{}", snake);
+        let sum_name = format_ident!("sum_{}", snake);
+        let min_name = format_ident!("min_{}", snake);
+        let max_name = format_ident!("max_{}", snake);
+        let column_filter = filter_type_tokens(
+            &Field {
+                is_optional: false,
+                ..(*f).clone()
+            },
+            ModuleDepth::TopLevel,
+        )
+        .unwrap_or_else(|| quote! { ferriorm_runtime::filter::BigIntFilter });
+        match kind {
+            AggregateKind::Numeric => {
+                having_fields
+                    .push(quote! { pub #avg_name: Option<ferriorm_runtime::filter::FloatFilter> });
+                having_fields
+                    .push(quote! { pub #sum_name: Option<ferriorm_runtime::filter::FloatFilter> });
+                having_fields.push(quote! { pub #min_name: Option<#column_filter> });
+                having_fields.push(quote! { pub #max_name: Option<#column_filter> });
+            }
+            AggregateKind::DateTime => {
+                having_fields.push(quote! { pub #min_name: Option<#column_filter> });
+                having_fields.push(quote! { pub #max_name: Option<#column_filter> });
+            }
+        }
+    }
+
+    // ── build_having arms ─────────────────────────────────────
+    // Mirrors gen_where_arms but the LHS is the aggregate expression
+    // (`AVG("col")`, `COUNT(*)`, ...) instead of a bare column reference.
+    // Aggregate results are never NULL semantically except for empty inputs,
+    // so we don't need IS NULL handling here.
+    let mut having_arms: Vec<TokenStream> = Vec::new();
+    // count: BigIntFilter on COUNT(*)
+    having_arms.push(quote! {
+        if let Some(filter) = &self.count {
+            if let Some(v) = &filter.equals { qb.push(" AND COUNT(*) = "); qb.push_bind(*v); }
+            if let Some(v) = &filter.not    { qb.push(" AND COUNT(*) != "); qb.push_bind(*v); }
+            if let Some(v) = &filter.gt     { qb.push(" AND COUNT(*) > "); qb.push_bind(*v); }
+            if let Some(v) = &filter.gte    { qb.push(" AND COUNT(*) >= "); qb.push_bind(*v); }
+            if let Some(v) = &filter.lt     { qb.push(" AND COUNT(*) < "); qb.push_bind(*v); }
+            if let Some(v) = &filter.lte    { qb.push(" AND COUNT(*) <= "); qb.push_bind(*v); }
+        }
+    });
+
+    for (f, kind) in &agg_fields {
+        let snake = to_snake_case(&f.name);
+        let db_name = &f.db_name;
+        let avg_ident = format_ident!("avg_{}", snake);
+        let sum_ident = format_ident!("sum_{}", snake);
+        let min_ident = format_ident!("min_{}", snake);
+        let max_ident = format_ident!("max_{}", snake);
+        match kind {
+            AggregateKind::Numeric => {
+                let avg_lhs = format!(r#"AVG("{db_name}")"#);
+                let sum_lhs = format!(r#"SUM("{db_name}")"#);
+                let min_lhs = format!(r#"MIN("{db_name}")"#);
+                let max_lhs = format!(r#"MAX("{db_name}")"#);
+                having_arms.push(gen_having_comparable_arms(&avg_ident, &avg_lhs));
+                having_arms.push(gen_having_comparable_arms(&sum_ident, &sum_lhs));
+                having_arms.push(gen_having_comparable_arms(&min_ident, &min_lhs));
+                having_arms.push(gen_having_comparable_arms(&max_ident, &max_lhs));
+            }
+            AggregateKind::DateTime => {
+                let min_lhs = format!(r#"MIN("{db_name}")"#);
+                let max_lhs = format!(r#"MAX("{db_name}")"#);
+                having_arms.push(gen_having_comparable_arms(&min_ident, &min_lhs));
+                having_arms.push(gen_having_comparable_arms(&max_ident, &max_lhs));
+            }
+        }
+    }
+
+    // build_having binds the RHS of `AVG(col) op ?` (always f64) and
+    // `COUNT(*) op ?` (always i64) regardless of which scalar types appear
+    // in the model. Reuse collect_db_bounds for the column-type bounds
+    // (needed by min/max filters), then top up with f64.
+    let mut db_bounds = collect_db_bounds(scalar_fields);
+    if !scalar_fields
+        .iter()
+        .any(|f| matches!(&f.field_type, FieldKind::Scalar(ScalarType::Float)))
+    {
+        db_bounds.push(quote! { f64: sqlx::Type<DB> + for<'e> sqlx::Encode<'e, DB> });
+    }
+
+    // ── is_numeric reuse: AggregateField is the canonical enum, but if no
+    //    aggregatable fields exist we still want a typed group_by query --
+    //    just without the agg ops. In that case AggregateField may not have
+    //    been emitted at all, so skip avg/sum/min/max methods.
+    let has_agg_fields = !agg_fields.is_empty();
+
+    let agg_methods = if has_agg_fields {
+        quote! {
+            pub fn count(mut self) -> Self {
+                self.count = true;
+                self
+            }
+
+            pub fn avg(mut self, field: #aggregate_field_name) -> Self {
+                assert!(field.is_numeric(), "avg() is only supported on numeric fields");
+                let db_name = field.db_name();
+                let alias = field.alias("avg");
+                self.agg_ops.push(("AVG", db_name, alias));
+                self
+            }
+
+            pub fn sum(mut self, field: #aggregate_field_name) -> Self {
+                assert!(field.is_numeric(), "sum() is only supported on numeric fields");
+                let db_name = field.db_name();
+                let alias = field.alias("sum");
+                self.agg_ops.push(("SUM", db_name, alias));
+                self
+            }
+
+            pub fn min(mut self, field: #aggregate_field_name) -> Self {
+                let db_name = field.db_name();
+                let alias = field.alias("min");
+                self.agg_ops.push(("MIN", db_name, alias));
+                self
+            }
+
+            pub fn max(mut self, field: #aggregate_field_name) -> Self {
+                let db_name = field.db_name();
+                let alias = field.alias("max");
+                self.agg_ops.push(("MAX", db_name, alias));
+                self
+            }
+        }
+    } else {
+        quote! {
+            pub fn count(mut self) -> Self {
+                self.count = true;
+                self
+            }
+        }
+    };
+
+    quote! {
+        #[derive(Debug, Clone, Copy)]
+        pub enum #groupby_field_name {
+            #(#groupby_variants),*
+        }
+
+        impl #groupby_field_name {
+            pub fn db_name(&self) -> &'static str {
+                match self {
+                    #(#groupby_db_arms,)*
+                }
+            }
+
+            fn alias(&self) -> &'static str {
+                match self {
+                    #(#groupby_alias_arms,)*
+                }
+            }
+        }
+
+        #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+        pub struct #groupby_result_name {
+            #(#result_fields,)*
+        }
+
+        #[derive(Debug, Clone, Default)]
+        pub struct #having_input_name {
+            #(#having_fields,)*
+            pub and: Option<Vec<#having_input_name>>,
+            pub or: Option<Vec<#having_input_name>>,
+            pub not: Option<Box<#having_input_name>>,
+        }
+
+        impl #having_input_name {
+            pub(crate) fn build_having<'args, DB: sqlx::Database>(
+                &self,
+                qb: &mut sqlx::QueryBuilder<'args, DB>,
+            )
+            where
+                #(#db_bounds,)*
+            {
+                #(#having_arms)*
+
+                if let Some(conditions) = &self.and {
+                    for c in conditions {
+                        c.build_having(qb);
+                    }
+                }
+                if let Some(conditions) = &self.or {
+                    if !conditions.is_empty() {
+                        qb.push(" AND (");
+                        for (i, c) in conditions.iter().enumerate() {
+                            if i > 0 { qb.push(" OR "); }
+                            qb.push("(1=1");
+                            c.build_having(qb);
+                            qb.push(")");
+                        }
+                        qb.push(")");
+                    }
+                }
+                if let Some(c) = &self.not {
+                    qb.push(" AND NOT (1=1");
+                    c.build_having(qb);
+                    qb.push(")");
+                }
+            }
+        }
+
+        pub struct GroupByQuery<'a> {
+            client: &'a DatabaseClient,
+            r#where: filter::#where_input,
+            group_keys: Vec<#groupby_field_name>,
+            agg_ops: Vec<(&'static str, &'static str, &'static str)>,
+            count: bool,
+            having: Option<#having_input_name>,
+        }
+
+        impl<'a> GroupByQuery<'a> {
+            pub fn r#where(mut self, r#where: filter::#where_input) -> Self {
+                self.r#where = r#where;
+                self
+            }
+
+            #agg_methods
+
+            pub fn having(mut self, having: #having_input_name) -> Self {
+                self.having = Some(having);
+                self
+            }
+
+            pub async fn exec(self) -> Result<Vec<#groupby_result_name>, FerriormError> {
+                if self.group_keys.is_empty() {
+                    return Err(FerriormError::Query(
+                        "group_by() requires at least one group key".into(),
+                    ));
+                }
+
+                let mut selections: Vec<String> = self.group_keys
+                    .iter()
+                    .map(|k| format!(r#""{}" as "{}""#, k.db_name(), k.alias()))
+                    .collect();
+                if self.count {
+                    selections.push(r#"COUNT(*) as "count""#.to_string());
+                }
+                for (func, col, alias) in &self.agg_ops {
+                    selections.push(format!(r#"{}("{}") as "{}""#, func, col, alias));
+                }
+
+                let group_by_clause: Vec<String> = self.group_keys
+                    .iter()
+                    .map(|k| format!(r#""{}""#, k.db_name()))
+                    .collect();
+
+                let base_sql = format!(
+                    r#"SELECT {} FROM "{}" WHERE 1=1"#,
+                    selections.join(", "),
+                    #table_name,
+                );
+
+                match self.client {
+                    DatabaseClient::Postgres(_) => {
+                        let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(&base_sql);
+                        self.r#where.build_where(&mut qb);
+                        qb.push(format!(" GROUP BY {}", group_by_clause.join(", ")));
+                        if let Some(h) = &self.having {
+                            qb.push(" HAVING 1=1");
+                            h.build_having(&mut qb);
+                        }
+                        self.client.fetch_all_pg(qb).await
+                    }
+                    DatabaseClient::Sqlite(_) => {
+                        let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(&base_sql);
+                        self.r#where.build_where(&mut qb);
+                        qb.push(format!(" GROUP BY {}", group_by_clause.join(", ")));
+                        if let Some(h) = &self.having {
+                            qb.push(" HAVING 1=1");
+                            h.build_having(&mut qb);
+                        }
+                        self.client.fetch_all_sqlite(qb).await
                     }
                 }
             }

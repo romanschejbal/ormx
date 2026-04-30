@@ -37,7 +37,14 @@ cargo run -p ferriorm-cli -- --schema path/to/schema.ferriorm db pull           
 - Multi-relation pairing is by `name`: when two relations connect the same pair of models, both sides must use `@relation("Name", ...)` and the validator rejects ambiguous schemas
 - Index / unique constraint names: `@@index([..], name: "...")` and `@@unique([..], name: "...")` override the auto-generated `idx_<table>_<cols>` / `uq_<table>_<cols>` identifiers (`map:` is accepted as a Prisma-style alias)
 - LIKE escape: codegen emits `LIKE ? ESCAPE '\'` and routes user input through `like_escape()` so `%`, `_`, `\` in `contains` / `starts_with` / `ends_with` are matched literally
+- `group_by`: `gen_groupby_types` reuses the existing `<Model>AggregateField` enum + `is_numeric`/`db_name`/`alias` helpers, and emits a `<Model>GroupByField` enum, a `<Model>GroupByResult` struct (with `Option<T>` group-key columns + per-aggregate columns + `count`), a `<Model>HavingInput` (mirrors `WhereInput` but with `count: BigIntFilter` and prefixed aggregate fields like `avg_<col>`/`sum_<col>`/`min_<col>`/`max_<col>`, composed via `and`/`or`/`not`), and a `GroupByQuery` builder. `build_having` LHS is the aggregate expression (`AVG("col")`, `COUNT(*)`, ...) instead of a bare column. The HAVING bound list always includes `f64` because AVG/SUM bind f64 RHS regardless of model fields.
 - `MigrationStep` includes `AlterPrimaryKey { table, from_columns, to_columns }` and `AlterEnumName { from_name, to_name }`; SQLite renders these as comments because in-place ALTER COLUMN isn't supported
+
+## Documentation
+
+- All user-facing feature documentation lives in `docs/` (mdBook source under `docs/src/`); the published book is at <https://romanschejbal.github.io/ferriorm/>.
+- When adding or changing a feature, update the relevant page in `docs/src/` (e.g. `docs/src/client/aggregates.md` for query-builder features). If a feature spans existing pages, prefer extending them; only add a new page (and SUMMARY.md entry) when it doesn't fit anywhere.
+- Keep `README.md` minimal: project overview, install, status, and a link to the docs. Do **not** embed code examples, schema snippets, or per-feature how-tos in the README -- they belong in `docs/`.
 
 ## Testing
 

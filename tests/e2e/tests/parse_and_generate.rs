@@ -253,6 +253,45 @@ fn generated_code_contains_expected_structures() {
         client_content.contains("FerriormClient"),
         "client.rs should contain FerriormClient struct"
     );
+
+    // Verify groupBy + HAVING surface is generated for User (which has
+    // String, Int, DateTime, and an enum field -- all groupable, with
+    // numeric/datetime aggregates).
+    assert!(
+        user_content.contains("pub fn group_by("),
+        "user.rs should expose group_by()"
+    );
+    assert!(
+        user_content.contains("pub enum UserGroupByField"),
+        "user.rs should define UserGroupByField"
+    );
+    assert!(
+        user_content.contains("pub struct UserGroupByResult"),
+        "user.rs should define UserGroupByResult"
+    );
+    assert!(
+        user_content.contains("pub struct UserHavingInput"),
+        "user.rs should define UserHavingInput"
+    );
+    assert!(
+        user_content.contains("fn build_having"),
+        "user.rs should implement build_having"
+    );
+    assert!(
+        user_content.contains("pub fn having("),
+        "GroupByQuery should expose having()"
+    );
+    assert!(
+        user_content.contains("COUNT(*)"),
+        "build_having should reference COUNT(*) in the count filter"
+    );
+    // Generated source contains escaped quotes around column names, e.g.
+    // `AVG(\"age\")`. Match on the prefix to avoid asserting on the exact
+    // escape spelling.
+    assert!(
+        user_content.contains("AVG("),
+        "build_having should reference AVG(...) for numeric aggregate filter"
+    );
 }
 
 #[test]
