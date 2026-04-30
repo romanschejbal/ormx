@@ -102,8 +102,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Schema Language
 - Models with scalar fields, enums, relations
-- Field attributes: `@id`, `@unique`, `@default`, `@updatedAt`, `@map`, `@relation`
+- Field attributes: `@id`, `@unique`, `@default`, `@updatedAt`, `@map`, `@relation`, `@db.*`
 - Block attributes: `@@map`, `@@index`, `@@unique`, `@@id`
+- Optional `@relation("Name", ...)` to disambiguate multiple relations between the same two models
+- Optional `@@index([..], name: "...")` and `@@unique([..], name: "...")` (also `map:` as alias) to override the auto-generated database identifier
+- `@@map` on enums to override the database type name (Postgres only)
 - Datasource and generator configuration
 
 ### Generated Client
