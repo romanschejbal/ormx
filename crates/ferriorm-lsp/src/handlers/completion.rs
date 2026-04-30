@@ -125,9 +125,7 @@ fn in_model_body(text: &str, offset: usize) -> bool {
                     let name_start = scan_back(bytes, after_ws, is_id);
                     let between_ws = scan_back(bytes, name_start, is_ws);
                     let kw_start = scan_back(bytes, between_ws, is_id);
-                    return text
-                        .get(kw_start..between_ws)
-                        .is_some_and(|s| s == "model");
+                    return text.get(kw_start..between_ws).is_some_and(|s| s == "model");
                 }
                 depth += 1;
             }
