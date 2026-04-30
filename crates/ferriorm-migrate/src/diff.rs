@@ -63,6 +63,20 @@ pub enum MigrationStep {
         enum_name: String,
         variant: String,
     },
+    /// The enum's database name changed via `@@map`. PG can rename in
+    /// place; `SQLite` emits a comment (enums are TEXT columns).
+    AlterEnumName {
+        from_name: String,
+        to_name: String,
+    },
+    /// The composite/primary-key columns changed on an existing table.
+    /// Postgres can DROP CONSTRAINT + ADD CONSTRAINT in place; `SQLite`
+    /// requires a table rebuild and the renderer emits a comment.
+    AlterPrimaryKey {
+        table: String,
+        from_columns: Vec<String>,
+        to_columns: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -233,12 +247,15 @@ fn sort_steps(steps: Vec<MigrationStep>) -> Vec<MigrationStep> {
 }
 
 fn diff_enums(from: &[Enum], to: &[Enum], steps: &mut Vec<MigrationStep>) {
-    let from_map: HashMap<&str, &Enum> = from.iter().map(|e| (e.db_name.as_str(), e)).collect();
-    let to_map: HashMap<&str, &Enum> = to.iter().map(|e| (e.db_name.as_str(), e)).collect();
+    // Match enums by their schema-side `name` so that a `@@map` change
+    // (which only moves the database identifier) surfaces as a rename
+    // rather than DROP + CREATE (which would destroy column data on PG).
+    let from_by_name: HashMap<&str, &Enum> = from.iter().map(|e| (e.name.as_str(), e)).collect();
+    let to_by_name: HashMap<&str, &Enum> = to.iter().map(|e| (e.name.as_str(), e)).collect();
 
     // New enums
-    for (name, e) in &to_map {
-        if !from_map.contains_key(name) {
+    for (name, e) in &to_by_name {
+        if !from_by_name.contains_key(name) {
             steps.push(MigrationStep::CreateEnum {
                 name: e.db_name.clone(),
                 variants: e.variants.clone(),
@@ -247,17 +264,23 @@ fn diff_enums(from: &[Enum], to: &[Enum], steps: &mut Vec<MigrationStep>) {
     }
 
     // Dropped enums
-    for (name, e) in &from_map {
-        if !to_map.contains_key(name) {
+    for (name, e) in &from_by_name {
+        if !to_by_name.contains_key(name) {
             steps.push(MigrationStep::DropEnum {
                 name: e.db_name.clone(),
             });
         }
     }
 
-    // Modified enums (new variants only — removing variants is dangerous)
-    for (name, to_enum) in &to_map {
-        if let Some(from_enum) = from_map.get(name) {
+    // Modified enums: rename via @@map, plus added variants.
+    for (name, to_enum) in &to_by_name {
+        if let Some(from_enum) = from_by_name.get(name) {
+            if from_enum.db_name != to_enum.db_name {
+                steps.push(MigrationStep::AlterEnumName {
+                    from_name: from_enum.db_name.clone(),
+                    to_name: to_enum.db_name.clone(),
+                });
+            }
             for variant in &to_enum.variants {
                 if !from_enum.variants.contains(variant) {
                     steps.push(MigrationStep::AddEnumVariant {
@@ -302,6 +325,17 @@ fn diff_models(
     for (name, to_model) in &to_map {
         if let Some(from_model) = from_map.get(name) {
             diff_columns(name, from_model, to_model, provider, enums, steps);
+
+            // Detect primary-key changes on existing tables.
+            let from_pk = resolve_index_columns(&from_model.primary_key.fields, from_model);
+            let to_pk = resolve_index_columns(&to_model.primary_key.fields, to_model);
+            if from_pk != to_pk {
+                steps.push(MigrationStep::AlterPrimaryKey {
+                    table: (*name).to_string(),
+                    from_columns: from_pk,
+                    to_columns: to_pk,
+                });
+            }
         }
     }
 }
@@ -372,6 +406,9 @@ fn diff_column(
     let from_type = field_sql_type(from, provider, enums);
     let to_type = field_sql_type(to, provider, enums);
 
+    let from_default = field_default_sql(from, provider);
+    let to_default = field_default_sql(to, provider);
+
     ColumnChanges {
         sql_type: if from_type == to_type {
             None
@@ -383,8 +420,29 @@ fn diff_column(
         } else {
             Some(to.is_optional)
         },
-        default: None, // TODO: diff defaults
+        // `Some(Some("x"))` -> set default to x;
+        // `Some(None)`      -> drop the default;
+        // `None`            -> no change.
+        default: if from_default == to_default {
+            None
+        } else {
+            Some(to_default)
+        },
     }
+}
+
+/// Two `ForeignKeyDef`s are equivalent only when every component
+/// matches: name, source column, target table, target column, and both
+/// cascade actions. A change to `onDelete`, `onUpdate`, or
+/// `references: [..]` must therefore produce a Drop + Add pair so the
+/// database actually applies the new behavior.
+fn fks_equivalent(a: &ForeignKeyDef, b: &ForeignKeyDef) -> bool {
+    a.constraint_name == b.constraint_name
+        && a.column == b.column
+        && a.referenced_table == b.referenced_table
+        && a.referenced_column == b.referenced_column
+        && a.on_delete == b.on_delete
+        && a.on_update == b.on_update
 }
 
 fn diff_foreign_keys(from: &[Model], to: &[Model], steps: &mut Vec<MigrationStep>) {
@@ -392,19 +450,13 @@ fn diff_foreign_keys(from: &[Model], to: &[Model], steps: &mut Vec<MigrationStep
     let to_fks = collect_foreign_keys(to);
 
     for fk in &to_fks {
-        if !from_fks
-            .iter()
-            .any(|f| f.constraint_name == fk.constraint_name)
-        {
+        if !from_fks.iter().any(|f| fks_equivalent(f, fk)) {
             steps.push(MigrationStep::AddForeignKey(fk.clone()));
         }
     }
 
     for fk in &from_fks {
-        if !to_fks
-            .iter()
-            .any(|f| f.constraint_name == fk.constraint_name)
-        {
+        if !to_fks.iter().any(|t| fks_equivalent(t, fk)) {
             steps.push(MigrationStep::DropForeignKey {
                 table: fk.table.clone(),
                 name: fk.constraint_name.clone(),
@@ -461,7 +513,11 @@ fn diff_indexes(from: &[Model], to: &[Model], steps: &mut Vec<MigrationStep>) {
             // Resolve to db column names by looking up each field on the model.
             let to_index_cols = resolve_index_columns(&idx.fields, to_model);
 
-            let idx_name = format!("idx_{}_{}", name, to_index_cols.join("_"));
+            // User-supplied @@index([..], name: "...") overrides the auto name.
+            let idx_name = idx
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("idx_{}_{}", name, to_index_cols.join("_")));
 
             if !from_indexes_normalized
                 .iter()
@@ -494,7 +550,10 @@ fn diff_unique_constraints(from: &[Model], to: &[Model], steps: &mut Vec<Migrati
 
         for uc in &to_model.unique_constraints {
             let to_cols = resolve_index_columns(&uc.fields, to_model);
-            let uc_name = unique_constraint_name(name, &to_cols);
+            let uc_name = uc
+                .name
+                .clone()
+                .unwrap_or_else(|| unique_constraint_name(name, &to_cols));
 
             if !from_resolved.iter().any(|fi| fi == &to_cols) {
                 steps.push(MigrationStep::AddUniqueConstraint {
@@ -523,9 +582,13 @@ fn diff_unique_constraints(from: &[Model], to: &[Model], steps: &mut Vec<Migrati
                 // Only drop if the table still exists; if the whole table is
                 // being dropped, the constraint goes with it.
                 if to_map.contains_key(name) {
+                    let drop_name = uc
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| unique_constraint_name(name, &from_cols));
                     steps.push(MigrationStep::DropUniqueConstraint {
                         table: (*name).to_string(),
-                        name: unique_constraint_name(name, &from_cols),
+                        name: drop_name,
                     });
                 }
             }
@@ -893,6 +956,7 @@ mod tests {
         );
         model.unique_constraints.push(UniqueConstraint {
             fields: vec!["userId".into(), "channel".into()],
+            name: None,
         });
 
         let from = make_schema(vec![], vec![]);
@@ -932,6 +996,7 @@ mod tests {
         let mut with_uc = base.clone();
         with_uc.unique_constraints.push(UniqueConstraint {
             fields: vec!["userId".into(), "channel".into()],
+            name: None,
         });
 
         // Adding the constraint

@@ -252,6 +252,7 @@ async fn introspect_tables(
                 .iter()
                 .find(|fk| fk.table_name == *table_name && fk.column_name == col.column_name)
                 .map(|fk| ResolvedRelation {
+                    name: None,
                     related_model: to_pascal_case(&fk.foreign_table_name),
                     relation_type: RelationType::ManyToOne,
                     fields: vec![col.column_name.clone()],
@@ -285,7 +286,10 @@ async fn introspect_tables(
                 if cols.is_empty() {
                     None
                 } else {
-                    Some(Index { fields: cols })
+                    Some(Index {
+                        fields: cols,
+                        name: None,
+                    })
                 }
             })
             .collect();
@@ -545,6 +549,7 @@ async fn introspect_sqlite_tables(pool: &SqlitePool) -> Result<Vec<Model>, sqlx:
                 .iter()
                 .find(|fk| fk.from == col.name)
                 .map(|fk| ResolvedRelation {
+                    name: None,
                     related_model: to_pascal_case(&fk.table),
                     relation_type: RelationType::ManyToOne,
                     fields: vec![col.name.clone()],
@@ -581,7 +586,10 @@ async fn introspect_sqlite_tables(pool: &SqlitePool) -> Result<Vec<Model>, sqlx:
                 let col_names: Vec<String> =
                     idx_cols.iter().filter_map(|c| c.name.clone()).collect();
                 if !col_names.is_empty() {
-                    model_indexes.push(Index { fields: col_names });
+                    model_indexes.push(Index {
+                        fields: col_names,
+                        name: None,
+                    });
                 }
             }
         }

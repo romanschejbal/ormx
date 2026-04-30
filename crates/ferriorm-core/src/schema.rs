@@ -132,8 +132,15 @@ serde_derive! {
 
 serde_derive! {
     /// A resolved relation between two models.
+    ///
+    /// `name` carries the optional disambiguator from
+    /// `@relation("Name", ...)` (or `name: "Name"`). When two fields on
+    /// the same model both relate to the same target, `name` must be
+    /// set on both sides for the validator to pair them correctly.
     #[derive(Debug, Clone)]
     pub struct ResolvedRelation {
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        pub name: Option<String>,
         pub related_model: String,
         pub relation_type: RelationType,
         pub fields: Vec<String>,
@@ -172,16 +179,26 @@ impl PrimaryKey {
 
 serde_derive! {
     /// An index definition.
+    ///
+    /// `name` overrides the auto-generated `idx_<table>_<cols>` name
+    /// when set via `@@index([..], name: "...")`.
     #[derive(Debug, Clone)]
     pub struct Index {
         pub fields: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        pub name: Option<String>,
     }
 }
 
 serde_derive! {
     /// A unique constraint.
+    ///
+    /// `name` overrides the auto-generated `uq_<table>_<cols>` name
+    /// when set via `@@unique([..], name: "...")`.
     #[derive(Debug, Clone)]
     pub struct UniqueConstraint {
         pub fields: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        pub name: Option<String>,
     }
 }

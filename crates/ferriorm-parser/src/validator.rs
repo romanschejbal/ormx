@@ -36,12 +36,112 @@ pub fn validate(ast: &ast::SchemaFile) -> Result<Schema, CoreError> {
     let enums = validate_enums(ast)?;
     let models = validate_models(ast, &enums)?;
 
+    validate_unique_db_names(&models)?;
+    validate_relation_disambiguation(&models)?;
+
     Ok(Schema {
         datasource,
         generators,
         enums,
         models,
     })
+}
+
+/// Two models cannot map to the same database table (`@@map("..."` /
+/// implicit snake_case-plural). Catching this here prevents conflicting
+/// CREATE TABLE statements at migration time.
+fn validate_unique_db_names(models: &[Model]) -> Result<(), CoreError> {
+    use std::collections::HashMap;
+    let mut seen: HashMap<&str, &str> = HashMap::new();
+    for m in models {
+        if let Some(existing) = seen.get(m.db_name.as_str()) {
+            return Err(CoreError::Validation {
+                message: format!(
+                    "Duplicate table name `{}` (used by models `{}` and `{}`). \
+                     Each model must map to a distinct table; use `@@map(\"...\")` to disambiguate.",
+                    m.db_name, existing, m.name,
+                ),
+            });
+        }
+        seen.insert(&m.db_name, &m.name);
+    }
+    Ok(())
+}
+
+/// Is `s` a Rust keyword (reserved or strict)? Used to reject schema
+/// field names that would cause `format_ident!` to panic in codegen.
+fn is_rust_keyword(s: &str) -> bool {
+    matches!(
+        s,
+        // Strict keywords
+        "as" | "break" | "const" | "continue" | "crate" | "else" | "enum" | "extern"
+        | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "match"
+        | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
+        | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe"
+        | "use" | "where" | "while"
+        // 2018+ keywords
+        | "async" | "await" | "dyn"
+        // Reserved (might become keywords)
+        | "abstract" | "become" | "box" | "do" | "final" | "macro" | "override"
+        | "priv" | "typeof" | "unsized" | "virtual" | "yield" | "try"
+    )
+}
+
+/// When two or more fields on the same model are *forward* FKs to the
+/// same target, OR two or more are *back-references* (implicit lists
+/// or `@relation` without `fields:`) from the same target, each must
+/// use `@relation("Name", ...)` to disambiguate. The forward and
+/// back-reference sides are tracked separately so a `parent` + `children`
+/// self-reference (one forward, one back) is unambiguous.
+fn validate_relation_disambiguation(models: &[Model]) -> Result<(), CoreError> {
+    use std::collections::{HashMap, HashSet};
+
+    for model in models {
+        // (target_model_name, is_fk_owner) -> fields in that group.
+        let mut groups: HashMap<(&str, bool), Vec<&Field>> = HashMap::new();
+
+        for field in &model.fields {
+            let target = match &field.field_type {
+                FieldKind::Model(name) => name.as_str(),
+                _ => continue,
+            };
+            let is_fk_owner = field
+                .relation
+                .as_ref()
+                .is_some_and(|r| !r.fields.is_empty());
+            groups.entry((target, is_fk_owner)).or_default().push(field);
+        }
+
+        for ((target, _), group) in &groups {
+            if group.len() < 2 {
+                continue;
+            }
+
+            let mut seen_names: HashSet<&str> = HashSet::new();
+            for field in group {
+                let name = field.relation.as_ref().and_then(|r| r.name.as_deref());
+                let Some(n) = name else {
+                    return Err(CoreError::Validation {
+                        message: format!(
+                            "Multiple relations from `{}` to `{}` require disambiguation. \
+                             Add `@relation(\"<Name>\", ...)` to each related field on both sides.",
+                            model.name, target,
+                        ),
+                    });
+                };
+                if !seen_names.insert(n) {
+                    return Err(CoreError::Validation {
+                        message: format!(
+                            "Duplicate relation name `{}` between `{}` and `{}`. \
+                             Each relation between the same pair of models must have a unique name.",
+                            n, model.name, target,
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_datasource(ast: &ast::SchemaFile) -> Result<DatasourceConfig, CoreError> {
@@ -132,6 +232,7 @@ fn validate_models(ast: &ast::SchemaFile, enums: &[Enum]) -> Result<Vec<Model>, 
     Ok(result)
 }
 
+#[allow(clippy::too_many_lines)] // sequential validation passes; splitting hides the order
 fn validate_model(
     model_def: &ast::ModelDef,
     enum_names: &HashSet<&str>,
@@ -170,7 +271,37 @@ fn validate_model(
         });
     }
 
+    // Field-name set for B4 (block-attribute field-existence checks).
+    // We accept either the schema field name or the snake_case form.
+    let field_name_set: HashSet<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+    let field_db_set: HashSet<&str> = fields.iter().map(|f| f.db_name.as_str()).collect();
+    let field_resolver = |needle: &str| -> Option<&Field> {
+        fields
+            .iter()
+            .find(|f| f.name == needle || f.db_name == needle || to_snake_case(&f.name) == needle)
+    };
+
     let primary_key = if let Some(composite_fields) = composite_id {
+        // B4 (PK): all named fields must exist on the model.
+        // B7: PK fields cannot be Json (uncomparable / unhashable in DBs).
+        for f in &composite_fields {
+            let Some(resolved) = field_resolver(f) else {
+                return Err(CoreError::Validation {
+                    message: format!(
+                        "`@@id` on model `{}` references unknown field `{}`",
+                        model_def.name, f,
+                    ),
+                });
+            };
+            if matches!(resolved.field_type, FieldKind::Scalar(ScalarType::Json)) {
+                return Err(CoreError::Validation {
+                    message: format!(
+                        "Field `{}.{}` of type `Json` cannot be part of a composite primary key.",
+                        model_def.name, resolved.name,
+                    ),
+                });
+            }
+        }
         PrimaryKey {
             fields: composite_fields,
         }
@@ -183,13 +314,38 @@ fn validate_model(
         PrimaryKey { fields: id_fields }
     };
 
+    // B4: @@index / @@unique field-existence checks. Each named field
+    // must exist on the model; otherwise the migration would emit a
+    // CREATE INDEX referencing a non-existent column.
+    for attr in &model_def.attributes {
+        let (kind, fs) = match attr {
+            ast::BlockAttribute::Index(idx) => ("@@index", &idx.fields),
+            ast::BlockAttribute::Unique(idx) => ("@@unique", &idx.fields),
+            _ => continue,
+        };
+        for f in fs {
+            if !field_name_set.contains(f.as_str())
+                && !field_db_set.contains(f.as_str())
+                && field_resolver(f).is_none()
+            {
+                return Err(CoreError::Validation {
+                    message: format!(
+                        "`{}` on model `{}` references unknown field `{}`",
+                        kind, model_def.name, f,
+                    ),
+                });
+            }
+        }
+    }
+
     // Indexes
     let indexes = model_def
         .attributes
         .iter()
         .filter_map(|a| match a {
-            ast::BlockAttribute::Index(fields) => Some(Index {
-                fields: fields.clone(),
+            ast::BlockAttribute::Index(idx) => Some(Index {
+                fields: idx.fields.clone(),
+                name: idx.name.clone(),
             }),
             _ => None,
         })
@@ -200,8 +356,9 @@ fn validate_model(
         .attributes
         .iter()
         .filter_map(|a| match a {
-            ast::BlockAttribute::Unique(fields) => Some(UniqueConstraint {
-                fields: fields.clone(),
+            ast::BlockAttribute::Unique(idx) => Some(UniqueConstraint {
+                fields: idx.fields.clone(),
+                name: idx.name.clone(),
             }),
             _ => None,
         })
@@ -217,6 +374,7 @@ fn validate_model(
     })
 }
 
+#[allow(clippy::too_many_lines)] // sequential per-field checks; splitting hides the order
 fn validate_field(
     field_def: &ast::FieldDef,
     model_name: &str,
@@ -224,6 +382,19 @@ fn validate_field(
     model_names: &HashSet<&str>,
 ) -> Result<Field, CoreError> {
     let type_name = &field_def.field_type.name;
+
+    // B1: reject Rust keywords as field names. Codegen would otherwise
+    // panic in `format_ident!`. Suggest `@map` for users who need the
+    // database column to keep that name.
+    if is_rust_keyword(&field_def.name) {
+        return Err(CoreError::Validation {
+            message: format!(
+                "Field name `{}.{}` is a Rust keyword and cannot be used as a struct field. \
+                 Rename the field and use `@map(\"{}\")` if you need that database column name.",
+                model_name, field_def.name, field_def.name,
+            ),
+        });
+    }
 
     let field_type = if let Ok(scalar) = type_name.parse::<ScalarType>() {
         FieldKind::Scalar(scalar)
@@ -256,6 +427,50 @@ fn validate_field(
         _ => None,
     });
 
+    // B2: @id cannot appear on an optional field — primary keys are NOT NULL.
+    if is_id && field_def.field_type.is_optional {
+        return Err(CoreError::Validation {
+            message: format!(
+                "Field `{}.{}` is marked `@id` but is optional; primary key columns cannot be NULL.",
+                model_name, field_def.name,
+            ),
+        });
+    }
+
+    // B3: @default(autoincrement()) only applies to integer scalars.
+    if matches!(default, Some(ast::DefaultValue::AutoIncrement)) {
+        let is_int_scalar = matches!(
+            field_type,
+            FieldKind::Scalar(ScalarType::Int | ScalarType::BigInt)
+        );
+        if !is_int_scalar {
+            return Err(CoreError::InvalidDefault {
+                model_name: model_name.to_string(),
+                field_name: field_def.name.clone(),
+                message: format!(
+                    "`@default(autoincrement())` requires an integer field, got `{type_name}`",
+                ),
+            });
+        }
+    }
+
+    // B5: @relation `fields` and `references` lists must have the same length.
+    for attr in &field_def.attributes {
+        if let ast::FieldAttribute::Relation(rel) = attr
+            && rel.fields.len() != rel.references.len()
+        {
+            return Err(CoreError::InvalidRelationFields {
+                model_name: model_name.to_string(),
+                field_name: field_def.name.clone(),
+                message: format!(
+                    "`@relation` `fields` (length {}) and `references` (length {}) must have the same length",
+                    rel.fields.len(),
+                    rel.references.len(),
+                ),
+            });
+        }
+    }
+
     // Resolve @map
     let db_name = field_def
         .attributes
@@ -278,6 +493,7 @@ fn validate_field(
             };
 
             Some(ResolvedRelation {
+                name: rel.name.clone(),
                 related_model: type_name.clone(),
                 relation_type,
                 fields: rel.fields.clone(),

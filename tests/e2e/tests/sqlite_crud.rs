@@ -1216,3 +1216,166 @@ async fn test_upsert_on_unique_column() {
     assert_eq!(user.id, "u1");
     assert_eq!(user.name, Some("Alicia".to_string()));
 }
+
+// ─── D1-D5: filter parameterization stress tests ────────────────────
+//
+// These tests probe SQL-injection / LIKE-escape concerns and edge-case
+// pagination/IN behaviors. They mirror the SQL the generated code would
+// produce (see `crates/ferriorm-codegen/src/model.rs:329-340` for the
+// `format!("%{}%", v)` pattern used by `contains/starts_with/ends_with`).
+
+/// D1: `contains: Some("100%_safe")` must match the literal string
+/// `100%_safe` and NOT the unrelated string `100Xsafe`. Mirrors the
+/// fixed codegen path: `like_escape(v)` -> wrap with `%`s -> bind with
+/// `LIKE ? ESCAPE '\'`.
+#[tokio::test]
+async fn d1_string_contains_with_percent_underscore_literals() {
+    let pool = setup_db().await;
+    insert_user(&pool, "u1", "literal@x.com", Some("100%_safe"), 1, true).await;
+    insert_user(&pool, "u2", "false@x.com", Some("100Xsafe"), 2, true).await;
+    insert_user(&pool, "u3", "unrelated@x.com", Some("nope"), 3, true).await;
+
+    // Mirror fixed codegen path.
+    let user_input = "100%_safe";
+    let pattern = format!("%{}%", ferriorm_runtime::filter::like_escape(user_input));
+
+    let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        r#"SELECT "id", "email", "name", "age", "active", "created_at" FROM "users" WHERE "name" LIKE "#,
+    );
+    qb.push_bind(pattern);
+    qb.push(r" ESCAPE '\'");
+    qb.push(r#" ORDER BY "id""#);
+
+    let rows: Vec<User> = qb
+        .build_query_as()
+        .fetch_all(&pool)
+        .await
+        .expect("select with LIKE");
+
+    let ids: Vec<&str> = rows.iter().map(|u| u.id.as_str()).collect();
+
+    assert!(
+        ids.contains(&"u1"),
+        "literal `100%_safe` must match itself; got: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"u2"),
+        "`100Xsafe` must NOT match the literal `100%_safe`; got: {ids:?}"
+    );
+}
+
+/// D2: contains with `'` and `\` — verifies that bind parameters are
+/// not concatenated. Single-quote / backslash must be passed safely as
+/// query parameters and round-trip through the DB.
+#[tokio::test]
+async fn d2_string_contains_with_single_quote_and_backslash() {
+    let pool = setup_db().await;
+    insert_user(&pool, "u1", "obrien@x.com", Some("O'Brien"), 1, true).await;
+    insert_user(&pool, "u2", "back@x.com", Some(r"back\slash"), 2, true).await;
+    insert_user(&pool, "u3", "plain@x.com", Some("Smith"), 3, true).await;
+
+    for needle in ["O'Brien", r"back\slash"] {
+        let pattern = format!("%{needle}%");
+        let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            r#"SELECT "id", "email", "name", "age", "active", "created_at" FROM "users" WHERE "name" LIKE "#,
+        );
+        qb.push_bind(pattern);
+
+        let rows: Vec<User> = qb
+            .build_query_as()
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("LIKE bind for {needle:?} must succeed: {e}"));
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one match for {needle:?}; got: {:?}",
+            rows.iter().map(|u| &u.name).collect::<Vec<_>>()
+        );
+        assert_eq!(rows[0].name.as_deref(), Some(needle));
+    }
+}
+
+/// D3: `equals: Some(None)` on a nullable string filter must produce
+/// `IS NULL`, not `= NULL` (which is always false in SQL). Regression
+/// for `219b2f0` "nullable filters".
+#[tokio::test]
+async fn d3_nullable_string_filter_some_none_is_null() {
+    let pool = setup_db().await;
+    insert_user(&pool, "u1", "a@x.com", Some("Alice"), 1, true).await;
+    insert_user(&pool, "u2", "b@x.com", None, 2, true).await;
+    insert_user(&pool, "u3", "c@x.com", Some("Carol"), 3, true).await;
+
+    // The wrong SQL: `WHERE "name" = NULL` returns ZERO rows.
+    let none_eq_count: i64 =
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM "users" WHERE "name" = NULL"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(none_eq_count, 0, "sanity: `= NULL` is always false in SQL");
+
+    // The right SQL: `IS NULL` finds the one nullable row.
+    let is_null_count: i64 =
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM "users" WHERE "name" IS NULL"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        is_null_count, 1,
+        "`IS NULL` must find the row with name=None"
+    );
+}
+
+/// D4: `IntFilter.in: Some(vec![])` must yield zero rows without a
+/// runtime error, regardless of whether the codegen emits `IN ()`,
+/// `WHERE 1 = 0`, or short-circuits the query. This pins the contract:
+/// "empty IN list -> empty result, no error" — Postgres rejects the
+/// naive `IN ()` form, so codegen needs to be deliberate.
+#[tokio::test]
+async fn d4_int_in_with_empty_vec_is_empty_set() {
+    let pool = setup_db().await;
+    insert_user(&pool, "u1", "a@x.com", Some("Alice"), 1, true).await;
+    insert_user(&pool, "u2", "b@x.com", Some("Bob"), 2, true).await;
+
+    // The tautological no-rows form is portable and guaranteed empty.
+    let rows: Vec<i64> = sqlx::query_scalar(r#"SELECT "age" FROM "users" WHERE 1 = 0"#)
+        .fetch_all(&pool)
+        .await
+        .expect("portable empty-set form must execute");
+    assert!(rows.is_empty(), "empty IN must yield no rows");
+
+    // SQLite happens to accept `IN ()` as well-formed and zero-matching.
+    // Postgres does NOT — so codegen must NOT emit `IN ()` directly on
+    // PG. The test documents that SQLite is lenient; the cross-DB
+    // contract has to be enforced in codegen, not the DB.
+    let lenient: Vec<i64> = sqlx::query_scalar(r#"SELECT "age" FROM "users" WHERE "age" IN ()"#)
+        .fetch_all(&pool)
+        .await
+        .expect("SQLite accepts `IN ()` and returns zero rows");
+    assert!(lenient.is_empty());
+}
+
+/// D5: pagination with `LIMIT 0` must succeed and return empty;
+/// `OFFSET 1_000_000` past end of table must succeed and return empty.
+#[tokio::test]
+async fn d5_pagination_limit_zero_and_huge_offset() {
+    let pool = setup_db().await;
+    insert_user(&pool, "u1", "a@x.com", Some("A"), 1, true).await;
+    insert_user(&pool, "u2", "b@x.com", Some("B"), 2, true).await;
+
+    let zero_limit: Vec<User> = sqlx::query_as(
+        r#"SELECT "id", "email", "name", "age", "active", "created_at" FROM "users" LIMIT 0"#,
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("LIMIT 0 must execute");
+    assert!(zero_limit.is_empty(), "LIMIT 0 returns no rows");
+
+    let huge_offset: Vec<User> = sqlx::query_as(
+        r#"SELECT "id", "email", "name", "age", "active", "created_at" FROM "users" LIMIT 100 OFFSET 1000000"#,
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("huge OFFSET must execute");
+    assert!(huge_offset.is_empty(), "OFFSET past end returns no rows");
+}

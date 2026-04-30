@@ -95,9 +95,15 @@ model Post {
 }
 ```
 
+Pass `name:` (or `map:`) to override the default `idx_<table>_<cols>` identifier:
+
+```prisma
+@@index([authorId, title], name: "ix_posts_author_title")
+```
+
 ### `@@unique`
 
-Create a composite unique constraint across multiple fields. This ensures that the combination of values is unique across all rows. Each `@@unique` also becomes a struct-style variant on the generated `WhereUniqueInput`, so it can be used for `find_unique`, `update`, `delete`, and as the `upsert` conflict target. See [Attributes › `@@unique`](./attributes.md#unique-field1-field2-) for the generated shape.
+Create a composite unique constraint across multiple fields. This ensures that the combination of values is unique across all rows. Each `@@unique` also becomes a struct-style variant on the generated `WhereUniqueInput`, so it can be used for `find_unique`, `update`, `delete`, and as the `upsert` conflict target. See [Attributes › `@@unique`](./attributes.md#unique-field1-field2--name-) for the generated shape.
 
 ```prisma
 model Subscription {
@@ -107,6 +113,12 @@ model Subscription {
 
   @@unique([userId, channel])
 }
+```
+
+Like `@@index`, the constraint name can be overridden with `name:` / `map:`:
+
+```prisma
+@@unique([userId, channel], name: "uq_subs_user_channel")
 ```
 
 > For single-field uniqueness, prefer the `@unique` field attribute instead.

@@ -325,18 +325,26 @@ fn gen_where_arms(scalar_fields: &[&Field]) -> Vec<TokenStream> {
             }
 
             if is_string {
+                // `like_escape` quotes %, _, and \ in user input so they
+                // match themselves; `ESCAPE '\\'` tells the DB to treat
+                // backslash as the escape character. Without this the
+                // query `contains: "100%_safe"` would also match
+                // arbitrary strings like `100Xsafe`.
                 arms.push(quote! {
                     if let Some(v) = &filter.contains {
                         qb.push(concat!(" AND \"", #db_name, "\" LIKE "));
-                        qb.push_bind(format!("%{}%", v));
+                        qb.push_bind(format!("%{}%", ferriorm_runtime::filter::like_escape(v)));
+                        qb.push(" ESCAPE '\\'");
                     }
                     if let Some(v) = &filter.starts_with {
                         qb.push(concat!(" AND \"", #db_name, "\" LIKE "));
-                        qb.push_bind(format!("{}%", v));
+                        qb.push_bind(format!("{}%", ferriorm_runtime::filter::like_escape(v)));
+                        qb.push(" ESCAPE '\\'");
                     }
                     if let Some(v) = &filter.ends_with {
                         qb.push(concat!(" AND \"", #db_name, "\" LIKE "));
-                        qb.push_bind(format!("%{}", v));
+                        qb.push_bind(format!("%{}", ferriorm_runtime::filter::like_escape(v)));
+                        qb.push(" ESCAPE '\\'");
                     }
                 });
             }
