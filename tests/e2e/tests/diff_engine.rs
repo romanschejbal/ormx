@@ -154,6 +154,7 @@ fn make_fk_field(
         is_updated_at: false,
         default: None,
         relation: Some(ResolvedRelation {
+            name: None,
             related_model: related_model.into(),
             relation_type: RelationType::ManyToOne,
             fields: vec![fk_field.into()],

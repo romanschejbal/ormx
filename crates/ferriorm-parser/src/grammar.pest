@@ -59,7 +59,13 @@ attr_db_type    = { "@db." ~ identifier ~ ("(" ~ (value ~ ("," ~ value)*)? ~ ")"
 default_value = _{ func_call | string_literal | number_literal | boolean_literal | identifier_value }
 
 // ─── Relation args ────────────────────────────────────────
-relation_args = { relation_arg ~ ("," ~ relation_arg)* }
+//
+// `@relation` accepts an optional positional name as the first arg
+// (e.g. `@relation("Authored", fields: [authorId], references: [id])`).
+// The name disambiguates multiple relations between the same two
+// models. Equivalent forms — positional `"Name"` and named
+// `name: "Name"` — both populate `RelationAttribute.name`.
+relation_args = { (string_literal ~ ("," ~ relation_arg)*) | (relation_arg ~ ("," ~ relation_arg)*) }
 relation_arg  = { named_arg }
 named_arg     = { identifier ~ ":" ~ (field_list | value) }
 field_list    = { "[" ~ identifier ~ ("," ~ identifier)* ~ "]" }

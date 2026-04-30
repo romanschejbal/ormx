@@ -565,6 +565,7 @@ fn f1_sqlite_inline_fk_with_mixed_cascade_actions() {
     ) -> Field {
         let mut f = make_field(name, ScalarType::String, false);
         f.relation = Some(ResolvedRelation {
+            name: None,
             related_model: target.into(),
             relation_type: RelationType::ManyToOne,
             fields: vec![name.into()],

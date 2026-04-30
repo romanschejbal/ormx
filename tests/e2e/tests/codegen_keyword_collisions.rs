@@ -135,11 +135,10 @@ model Tree {
 // ─── C4: multiple relations between the same two models ─────────────
 
 /// `Post.author` and `Post.reviewer` both point to `User` via two
-/// different FK fields. Even without named-relation disambiguation,
-/// codegen must NOT panic and must produce valid Rust. The test
-/// documents the current behavior — if the parser later gains relation
-/// names, this test should be expanded to assert both accessors exist
-/// and are distinct.
+/// different FK fields. With named relations (`@relation("Authored",
+/// ...)`), the validator pairs forward and back references by name and
+/// codegen must produce valid Rust with distinct accessors on both
+/// sides.
 #[test]
 fn multiple_relations_same_target() {
     let schema = r#"
@@ -147,7 +146,9 @@ datasource db { provider = "sqlite" url = "sqlite::memory:" }
 generator client { output = "./src/generated" }
 
 model User {
-  id   String @id @default(uuid())
+  id       String @id @default(uuid())
+  authored Post[] @relation("Authored")
+  reviewed Post[] @relation("Reviewed")
   @@map("users")
 }
 
@@ -156,14 +157,29 @@ model Post {
   title      String
   authorId   String
   reviewerId String
-  author     User   @relation(fields: [authorId], references: [id])
-  reviewer   User   @relation(fields: [reviewerId], references: [id])
+  author     User   @relation("Authored", fields: [authorId], references: [id])
+  reviewer   User   @relation("Reviewed", fields: [reviewerId], references: [id])
   @@map("posts")
 }
 "#;
     let tmp = generate_to_tempdir(schema)
         .unwrap_or_else(|e| panic!("multi-relation codegen failed: {e}"));
     assert_all_generated_files_parse(tmp.path());
+
+    // The User-side accessors must wire through their respective FK
+    // columns: `authored` -> author_id, `reviewed` -> reviewer_id.
+    let user_src =
+        std::fs::read_to_string(tmp.path().join("generated").join("user.rs")).unwrap();
+    assert!(
+        user_src.contains("author_id"),
+        "User accessors must reference author_id; codegen failed to pair `authored` \
+         with `author` via @relation(\"Authored\")"
+    );
+    assert!(
+        user_src.contains("reviewer_id"),
+        "User accessors must reference reviewer_id; codegen failed to pair `reviewed` \
+         with `reviewer` via @relation(\"Reviewed\")"
+    );
 }
 
 // ─── C5: @db.* native type hints survive ────────────────────────────

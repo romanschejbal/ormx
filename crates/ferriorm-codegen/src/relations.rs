@@ -26,8 +26,10 @@ pub fn collect_relations<'a>(model: &'a Model, schema: &'a Schema) -> Vec<Relati
             let related = schema.models.iter().find(|m| m.name == rel.related_model);
             if let Some(related_model) = related {
                 let (fk_column, ref_column) = if rel.fields.is_empty() {
-                    // The other side has the FK (OneToMany) — find the back-reference
-                    find_back_reference(model, related_model)
+                    // The other side has the FK (OneToMany) — find the back-reference,
+                    // filtering by relation name when one is set so multi-relations
+                    // pair correctly.
+                    find_back_reference(model, related_model, rel.name.as_deref())
                         .unwrap_or_else(|| ("id".into(), "id".into()))
                 } else {
                     // This side has the FK (ManyToOne)
@@ -43,12 +45,16 @@ pub fn collect_relations<'a>(model: &'a Model, schema: &'a Schema) -> Vec<Relati
                 });
             }
         } else if field.is_list {
-            // Implicit relation (e.g., posts Post[])
+            // Implicit relation (e.g., posts Post[]) — only valid when there's a
+            // single relation between this model and the target. Multi-relations
+            // are rejected by the validator unless every side has a name, so
+            // there's at most one matching back-reference here.
             if let FieldKind::Model(related_name) = &field.field_type {
                 let related = schema.models.iter().find(|m| m.name == *related_name);
                 if let Some(related_model) = related {
-                    let (fk_column, ref_column) = find_back_reference(model, related_model)
-                        .unwrap_or_else(|| ("id".into(), "id".into()));
+                    let (fk_column, ref_column) =
+                        find_back_reference(model, related_model, None)
+                            .unwrap_or_else(|| ("id".into(), "id".into()));
 
                     relations.push(RelationInfo {
                         field,
@@ -66,12 +72,20 @@ pub fn collect_relations<'a>(model: &'a Model, schema: &'a Schema) -> Vec<Relati
 }
 
 /// Find the back-reference from the related model to this model.
-/// E.g., for User.posts (Post[]), find Post.authorId @relation(fields: [authorId], references: [id])
-fn find_back_reference(parent: &Model, child: &Model) -> Option<(String, String)> {
+/// E.g., for User.posts (Post[]), find Post.authorId @relation(fields: [authorId], references: [id]).
+///
+/// When `name` is `Some`, only matches relations with the same name, so
+/// multi-relations between the same two models pair correctly.
+fn find_back_reference(
+    parent: &Model,
+    child: &Model,
+    name: Option<&str>,
+) -> Option<(String, String)> {
     for field in &child.fields {
         if let Some(rel) = &field.relation
             && rel.related_model == parent.name
             && !rel.fields.is_empty()
+            && (name.is_none() || rel.name.as_deref() == name)
         {
             return Some((rel.fields[0].clone(), rel.references[0].clone()));
         }

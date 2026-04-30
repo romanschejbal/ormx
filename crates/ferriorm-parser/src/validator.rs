@@ -36,12 +36,74 @@ pub fn validate(ast: &ast::SchemaFile) -> Result<Schema, CoreError> {
     let enums = validate_enums(ast)?;
     let models = validate_models(ast, &enums)?;
 
+    validate_relation_disambiguation(&models)?;
+
     Ok(Schema {
         datasource,
         generators,
         enums,
         models,
     })
+}
+
+/// When two or more fields on the same model are *forward* FKs to the
+/// same target, OR two or more are *back-references* (implicit lists
+/// or `@relation` without `fields:`) from the same target, each must
+/// use `@relation("Name", ...)` to disambiguate. The forward and
+/// back-reference sides are tracked separately so a `parent` + `children`
+/// self-reference (one forward, one back) is unambiguous.
+fn validate_relation_disambiguation(models: &[Model]) -> Result<(), CoreError> {
+    use std::collections::{HashMap, HashSet};
+
+    for model in models {
+        // (target_model_name, is_fk_owner) -> fields in that group.
+        let mut groups: HashMap<(&str, bool), Vec<&Field>> = HashMap::new();
+
+        for field in &model.fields {
+            let target = match &field.field_type {
+                FieldKind::Model(name) => name.as_str(),
+                _ => continue,
+            };
+            let is_fk_owner = field
+                .relation
+                .as_ref()
+                .is_some_and(|r| !r.fields.is_empty());
+            groups.entry((target, is_fk_owner)).or_default().push(field);
+        }
+
+        for ((target, _), group) in &groups {
+            if group.len() < 2 {
+                continue;
+            }
+
+            let mut seen_names: HashSet<&str> = HashSet::new();
+            for field in group {
+                let name = field
+                    .relation
+                    .as_ref()
+                    .and_then(|r| r.name.as_deref());
+                let Some(n) = name else {
+                    return Err(CoreError::Validation {
+                        message: format!(
+                            "Multiple relations from `{}` to `{}` require disambiguation. \
+                             Add `@relation(\"<Name>\", ...)` to each related field on both sides.",
+                            model.name, target,
+                        ),
+                    });
+                };
+                if !seen_names.insert(n) {
+                    return Err(CoreError::Validation {
+                        message: format!(
+                            "Duplicate relation name `{}` between `{}` and `{}`. \
+                             Each relation between the same pair of models must have a unique name.",
+                            n, model.name, target,
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_datasource(ast: &ast::SchemaFile) -> Result<DatasourceConfig, CoreError> {
@@ -278,6 +340,7 @@ fn validate_field(
             };
 
             Some(ResolvedRelation {
+                name: rel.name.clone(),
                 related_model: type_name.clone(),
                 relation_type,
                 fields: rel.fields.clone(),

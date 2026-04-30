@@ -252,6 +252,7 @@ async fn introspect_tables(
                 .iter()
                 .find(|fk| fk.table_name == *table_name && fk.column_name == col.column_name)
                 .map(|fk| ResolvedRelation {
+                    name: None,
                     related_model: to_pascal_case(&fk.foreign_table_name),
                     relation_type: RelationType::ManyToOne,
                     fields: vec![col.column_name.clone()],
@@ -545,6 +546,7 @@ async fn introspect_sqlite_tables(pool: &SqlitePool) -> Result<Vec<Model>, sqlx:
                 .iter()
                 .find(|fk| fk.from == col.name)
                 .map(|fk| ResolvedRelation {
+                    name: None,
                     related_model: to_pascal_case(&fk.table),
                     relation_type: RelationType::ManyToOne,
                     fields: vec![col.name.clone()],

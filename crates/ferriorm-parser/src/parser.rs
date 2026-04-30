@@ -331,14 +331,21 @@ fn parse_relation_attribute(pair: pest::iterators::Pair<'_, Rule>) -> RelationAt
     let mut name = None;
 
     for arg in args_pair.into_inner() {
+        match arg.as_rule() {
+            // Positional name as first arg: @relation("Authored", ...)
+            Rule::string_literal => {
+                name = Some(parse_string_value(&arg));
+                continue;
+            }
+            Rule::relation_arg | Rule::named_arg => {}
+            _ => continue,
+        }
+
         // relation_arg = { named_arg }
-        // Each arg is a relation_arg containing a named_arg
         let named_arg = if arg.as_rule() == Rule::relation_arg {
             arg.into_inner().next().unwrap()
-        } else if arg.as_rule() == Rule::named_arg {
-            arg
         } else {
-            continue;
+            arg
         };
 
         // named_arg = { identifier ~ ":" ~ (field_list | value) }
