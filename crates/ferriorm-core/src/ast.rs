@@ -141,8 +141,16 @@ pub enum ReferentialAction {
 /// Block-level attributes (e.g., `@@index`, `@@unique`, `@@map`, `@@id`).
 #[derive(Debug, Clone)]
 pub enum BlockAttribute {
-    Index(Vec<String>),
-    Unique(Vec<String>),
+    Index(IndexAttribute),
+    Unique(IndexAttribute),
     Map(String),
     Id(Vec<String>),
+}
+
+/// `@@index([fields], name: "...")` or `@@unique([fields], name: "...")`.
+/// `name` overrides the auto-generated index/constraint name.
+#[derive(Debug, Clone)]
+pub struct IndexAttribute {
+    pub fields: Vec<String>,
+    pub name: Option<String>,
 }

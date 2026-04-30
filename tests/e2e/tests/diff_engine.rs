@@ -424,6 +424,7 @@ fn diff_add_index() {
             );
             m.indexes = vec![Index {
                 fields: vec!["email".into()],
+                name: None,
             }];
             m
         }],
@@ -478,6 +479,7 @@ fn diff_index_not_re_emitted_when_unchanged() {
             // Introspection gives db column names
             m.indexes = vec![Index {
                 fields: vec!["username".into(), "captured_at".into()],
+                name: None,
             }];
             m
         }],
@@ -499,6 +501,7 @@ fn diff_index_not_re_emitted_when_unchanged() {
             // Parser gives schema field names
             m.indexes = vec![Index {
                 fields: vec!["username".into(), "capturedAt".into()],
+                name: None,
             }];
             m
         }],
@@ -1104,6 +1107,7 @@ fn diff_emits_compound_unique_and_renders_sqlite() {
     );
     model.unique_constraints.push(UniqueConstraint {
         fields: vec!["userId".into(), "channel".into()],
+        name: None,
     });
 
     let from = empty_schema();

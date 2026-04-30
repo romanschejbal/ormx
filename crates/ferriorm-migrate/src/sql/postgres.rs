@@ -39,6 +39,9 @@ fn render_step(step: &MigrationStep) -> String {
                 variant.to_lowercase()
             )
         }
+        MigrationStep::AlterEnumName { from_name, to_name } => {
+            format!("ALTER TYPE \"{from_name}\" RENAME TO \"{to_name}\";\n")
+        }
         MigrationStep::CreateTable(ct) => render_create_table(ct),
         MigrationStep::DropTable { name } => {
             format!("DROP TABLE IF EXISTS \"{name}\" CASCADE;\n")
@@ -101,6 +104,18 @@ fn render_step(step: &MigrationStep) -> String {
                 .join(", ");
             format!("ALTER TABLE \"{table}\" ADD CONSTRAINT \"{name}\" UNIQUE ({cols});\n")
         }
+        MigrationStep::AlterPrimaryKey { table, to_columns, .. } => {
+            let pk_name = format!("{table}_pkey");
+            let cols = to_columns
+                .iter()
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "ALTER TABLE \"{table}\" DROP CONSTRAINT IF EXISTS \"{pk_name}\";\n\
+                 ALTER TABLE \"{table}\" ADD PRIMARY KEY ({cols});\n"
+            )
+        }
     }
 }
 
@@ -157,9 +172,12 @@ fn render_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> St
     let mut sql = String::new();
 
     if let Some(new_type) = &changes.sql_type {
+        // PG requires `USING` for type changes when data exists. Cast
+        // through the new type by default; users can edit the migration
+        // SQL if a more specific cast (e.g. `col::text::jsonb`) is needed.
         let _ = writeln!(
             sql,
-            "ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" TYPE {new_type};"
+            "ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" TYPE {new_type} USING \"{column}\"::{new_type};"
         );
     }
 
@@ -174,6 +192,23 @@ fn render_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> St
                 sql,
                 "ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" SET NOT NULL;"
             );
+        }
+    }
+
+    if let Some(default_change) = &changes.default {
+        match default_change {
+            Some(new_default) if !new_default.is_empty() => {
+                let _ = writeln!(
+                    sql,
+                    "ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" SET DEFAULT {new_default};"
+                );
+            }
+            _ => {
+                let _ = writeln!(
+                    sql,
+                    "ALTER TABLE \"{table}\" ALTER COLUMN \"{column}\" DROP DEFAULT;"
+                );
+            }
         }
     }
 

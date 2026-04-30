@@ -9,7 +9,8 @@
 
 use ferriorm_core::ast::{
     BlockAttribute, DefaultValue, EnumDef, FieldAttribute, FieldDef, FieldType, Generator,
-    LiteralValue, ModelDef, ReferentialAction, RelationAttribute, SchemaFile, Span, StringOrEnv,
+    IndexAttribute, LiteralValue, ModelDef, ReferentialAction, RelationAttribute, SchemaFile,
+    Span, StringOrEnv,
 };
 use pest::Parser;
 use pest_derive::Parser;
@@ -138,22 +139,25 @@ fn parse_enum(pair: pest::iterators::Pair<'_, Rule>) -> EnumDef {
     let name = inner.next().unwrap().as_str().to_string();
 
     let mut variants = Vec::new();
-    for variant_pair in inner {
-        if variant_pair.as_rule() == Rule::enum_variant {
-            let variant_name = variant_pair
-                .into_inner()
-                .next()
-                .unwrap()
-                .as_str()
-                .to_string();
-            variants.push(variant_name);
+    let mut db_name = None;
+    for member in inner {
+        match member.as_rule() {
+            Rule::enum_variant => {
+                let variant_name = member.into_inner().next().unwrap().as_str().to_string();
+                variants.push(variant_name);
+            }
+            Rule::enum_block_attr_map => {
+                let s = member.into_inner().next().unwrap().as_str();
+                db_name = Some(unquote(s));
+            }
+            _ => {}
         }
     }
 
     EnumDef {
         name,
         variants,
-        db_name: None,
+        db_name,
         span,
     }
 }
@@ -172,14 +176,10 @@ fn parse_model(pair: pest::iterators::Pair<'_, Rule>) -> Result<ModelDef, ParseE
                 fields.push(parse_field(member)?);
             }
             Rule::block_attr_index => {
-                attributes.push(BlockAttribute::Index(parse_field_list_from_block_attr(
-                    member,
-                )));
+                attributes.push(BlockAttribute::Index(parse_index_attribute(member)));
             }
             Rule::block_attr_unique => {
-                attributes.push(BlockAttribute::Unique(parse_field_list_from_block_attr(
-                    member,
-                )));
+                attributes.push(BlockAttribute::Unique(parse_index_attribute(member)));
             }
             Rule::block_attr_map => {
                 let s = member.into_inner().next().unwrap().as_str();
@@ -397,6 +397,30 @@ fn parse_field_list_from_block_attr(pair: pest::iterators::Pair<'_, Rule>) -> Ve
     parse_field_list(&field_list)
 }
 
+/// Parse a `@@index` / `@@unique` block attribute body:
+/// the leading field list followed by zero or more named args.
+/// Currently only `name: "..."` is consumed.
+fn parse_index_attribute(pair: pest::iterators::Pair<'_, Rule>) -> IndexAttribute {
+    let mut inner = pair.into_inner();
+    let field_list = inner.next().unwrap();
+    let fields = parse_field_list(&field_list);
+    let mut name = None;
+
+    for arg in inner {
+        if arg.as_rule() != Rule::named_arg {
+            continue;
+        }
+        let mut named = arg.into_inner();
+        let key = named.next().unwrap().as_str();
+        let value_pair = named.next().unwrap();
+        if key == "name" || key == "map" {
+            name = Some(parse_string_value(&value_pair));
+        }
+    }
+
+    IndexAttribute { fields, name }
+}
+
 fn parse_string_or_env(pair: &pest::iterators::Pair<'_, Rule>) -> Result<StringOrEnv, ParseError> {
     match pair.as_rule() {
         Rule::func_call => {
@@ -544,7 +568,7 @@ model User {
         assert!(
             user.attributes
                 .iter()
-                .any(|a| matches!(a, BlockAttribute::Index(fields) if fields == &["email"]))
+                .any(|a| matches!(a, BlockAttribute::Index(idx) if idx.fields == ["email"]))
         );
         assert!(
             user.attributes

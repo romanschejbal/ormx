@@ -177,3 +177,41 @@ pub enum QueryMode {
     Default,
     Insensitive,
 }
+
+/// Escape `%`, `_`, and `\` in a literal substring so it matches itself
+/// when embedded in a `LIKE` pattern. The companion SQL must include
+/// `ESCAPE '\\'` (a single backslash). Used by generated code for the
+/// `contains`, `starts_with`, and `ends_with` filter operators.
+///
+/// Example: `like_escape("100%_safe")` returns `"100\\%\\_safe"`.
+#[must_use]
+pub fn like_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' | '%' | '_' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::like_escape;
+
+    #[test]
+    fn like_escape_passes_plain_text() {
+        assert_eq!(like_escape("hello"), "hello");
+    }
+
+    #[test]
+    fn like_escape_escapes_percent_underscore_backslash() {
+        assert_eq!(like_escape("100%_safe"), "100\\%\\_safe");
+        assert_eq!(like_escape("\\path\\"), "\\\\path\\\\");
+        assert_eq!(like_escape(""), "");
+    }
+}

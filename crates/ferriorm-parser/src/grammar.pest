@@ -31,8 +31,13 @@ func_call      = { identifier ~ "(" ~ (value ~ ("," ~ value)*)? ~ ")" }
 identifier_value = { identifier }
 
 // ─── Enum ──────────────────────────────────────────────────
-enum_block   = { "enum" ~ identifier ~ "{" ~ NEWLINE* ~ (enum_variant ~ NEWLINE*)* ~ "}" }
+enum_block   = { "enum" ~ identifier ~ "{" ~ NEWLINE* ~ (enum_member ~ NEWLINE*)* ~ "}" }
+enum_member  = _{ enum_block_attribute | enum_variant }
 enum_variant = { identifier }
+// Block-level attributes on an enum. Currently only `@@map("...")`,
+// which renames the underlying database type.
+enum_block_attribute = _{ enum_block_attr_map }
+enum_block_attr_map  = { "@@map" ~ "(" ~ string_literal ~ ")" }
 
 // ─── Model ─────────────────────────────────────────────────
 model_block = { "model" ~ identifier ~ "{" ~ NEWLINE* ~ (model_member ~ NEWLINE*)* ~ "}" }
@@ -73,8 +78,11 @@ field_list    = { "[" ~ identifier ~ ("," ~ identifier)* ~ "]" }
 // ─── Block attributes ─────────────────────────────────────
 block_attribute = _{ block_attr_index | block_attr_unique | block_attr_map | block_attr_id }
 
-block_attr_index  = { "@@index" ~ "(" ~ field_list ~ ")" }
-block_attr_unique = { "@@unique" ~ "(" ~ field_list ~ ")" }
+// `@@index` and `@@unique` accept the field list followed by zero or more
+// named args. The `name:` arg overrides the auto-generated index name
+// (default: `idx_<table>_<cols>` / `uq_<table>_<cols>`).
+block_attr_index  = { "@@index" ~ "(" ~ field_list ~ ("," ~ named_arg)* ~ ")" }
+block_attr_unique = { "@@unique" ~ "(" ~ field_list ~ ("," ~ named_arg)* ~ ")" }
 block_attr_map    = { "@@map" ~ "(" ~ string_literal ~ ")" }
 block_attr_id     = { "@@id" ~ "(" ~ field_list ~ ")" }
 

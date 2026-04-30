@@ -76,6 +76,11 @@ fn render_step(step: &MigrationStep) -> String {
                 variant.to_lowercase()
             )
         }
+        MigrationStep::AlterEnumName { from_name, to_name } => {
+            format!(
+                "-- SQLite: enum \"{from_name}\" renamed to \"{to_name}\" (no DDL needed, stored as TEXT).\n"
+            )
+        }
         MigrationStep::CreateTable(ct) => render_create_table(ct, None),
         MigrationStep::DropTable { name } => {
             format!("DROP TABLE IF EXISTS \"{name}\";\n")
@@ -146,6 +151,21 @@ fn render_step(step: &MigrationStep) -> String {
         MigrationStep::DropUniqueConstraint { table: _, name } => {
             // Unique constraints created via CREATE UNIQUE INDEX can be dropped this way.
             format!("DROP INDEX IF EXISTS \"{name}\";\n")
+        }
+        MigrationStep::AlterPrimaryKey {
+            table,
+            from_columns,
+            to_columns,
+        } => {
+            // SQLite cannot redefine the PK in place; the user must
+            // recreate the table. Emit a comment that documents the
+            // requested change so the migration is auditable.
+            let from_cols = from_columns.join(", ");
+            let to_cols = to_columns.join(", ");
+            format!(
+                "-- SQLite: PRIMARY KEY change on \"{table}\" requires a table rebuild.\n\
+                 -- Requested change: PRIMARY KEY ({from_cols}) -> PRIMARY KEY ({to_cols})\n"
+            )
         }
     }
 }
@@ -239,6 +259,15 @@ fn render_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> St
             sql.push_str("-- Requested change: DROP NOT NULL\n");
         } else {
             sql.push_str("-- Requested change: SET NOT NULL\n");
+        }
+    }
+
+    if let Some(default_change) = &changes.default {
+        match default_change {
+            Some(new_default) if !new_default.is_empty() => {
+                let _ = writeln!(sql, "-- Requested change: SET DEFAULT {new_default}");
+            }
+            _ => sql.push_str("-- Requested change: DROP DEFAULT\n"),
         }
     }
 

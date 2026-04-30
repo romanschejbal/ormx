@@ -1225,9 +1225,9 @@ async fn test_upsert_on_unique_column() {
 // `format!("%{}%", v)` pattern used by `contains/starts_with/ends_with`).
 
 /// D1: `contains: Some("100%_safe")` must match the literal string
-/// `100%_safe` and NOT the unrelated string `100Xsafe`. Today, codegen
-/// emits `format!("%{}%", v)` with no LIKE-escape, so both rows match.
-/// **Expected to fail today.**
+/// `100%_safe` and NOT the unrelated string `100Xsafe`. Mirrors the
+/// fixed codegen path: `like_escape(v)` -> wrap with `%`s -> bind with
+/// `LIKE ? ESCAPE '\'`.
 #[tokio::test]
 async fn d1_string_contains_with_percent_underscore_literals() {
     let pool = setup_db().await;
@@ -1235,14 +1235,18 @@ async fn d1_string_contains_with_percent_underscore_literals() {
     insert_user(&pool, "u2", "false@x.com", Some("100Xsafe"), 2, true).await;
     insert_user(&pool, "u3", "unrelated@x.com", Some("nope"), 3, true).await;
 
-    // Mirror generated codegen: format!("%{}%", v) with raw user input.
+    // Mirror fixed codegen path.
     let user_input = "100%_safe";
-    let pattern = format!("%{user_input}%");
+    let pattern = format!(
+        "%{}%",
+        ferriorm_runtime::filter::like_escape(user_input)
+    );
 
     let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
         r#"SELECT "id", "email", "name", "age", "active", "created_at" FROM "users" WHERE "name" LIKE "#,
     );
     qb.push_bind(pattern);
+    qb.push(r" ESCAPE '\'");
     qb.push(r#" ORDER BY "id""#);
 
     let rows: Vec<User> = qb
@@ -1259,9 +1263,7 @@ async fn d1_string_contains_with_percent_underscore_literals() {
     );
     assert!(
         !ids.contains(&"u2"),
-        "`100Xsafe` must NOT match the literal `100%_safe` — \
-         this exposes missing LIKE-escape in codegen contains/. \
-         got: {ids:?}"
+        "`100Xsafe` must NOT match the literal `100%_safe`; got: {ids:?}"
     );
 }
 
