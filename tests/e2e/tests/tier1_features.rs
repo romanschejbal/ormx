@@ -646,3 +646,225 @@ async fn test_select_with_where_filter() {
     assert_eq!(results[1].id, Some("u2".to_string()));
     assert_eq!(results[1].email, Some("b@test.com".to_string()));
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// GroupBy Tests
+//
+// Mirror the aggregate-test pattern: exercise the SQL strings the codegen
+// produces (`SELECT <keys>, <aggregates> FROM ... WHERE 1=1 GROUP BY <keys>
+// HAVING 1=1 ...`) via raw_fetch_all_sqlite. This validates the SQL the
+// generator emits without requiring a regenerated client in the test crate.
+// ═══════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, sqlx::FromRow)]
+struct GroupByActiveRow {
+    #[sqlx(default)]
+    active: Option<i64>,
+    #[sqlx(default)]
+    count: Option<i64>,
+    #[sqlx(default)]
+    avg_age: Option<f64>,
+    #[sqlx(default)]
+    sum_age: Option<i64>,
+    #[sqlx(default)]
+    min_age: Option<i64>,
+    #[sqlx(default)]
+    max_age: Option<i64>,
+}
+
+#[tokio::test]
+async fn test_groupby_basic_count() {
+    let client = setup_client().await;
+
+    insert_user(&client, "u1", "a@test.com", Some("A"), 20, true).await;
+    insert_user(&client, "u2", "b@test.com", Some("B"), 30, true).await;
+    insert_user(&client, "u3", "c@test.com", Some("C"), 40, false).await;
+    insert_user(&client, "u4", "d@test.com", Some("D"), 50, false).await;
+
+    let mut rows: Vec<GroupByActiveRow> = client
+        .raw_fetch_all_sqlite(
+            r#"SELECT "active" as "active", COUNT(*) as "count" FROM "users" WHERE 1=1 GROUP BY "active""#,
+        )
+        .await
+        .expect("group by active");
+
+    rows.sort_by_key(|r| r.active.unwrap_or(-1));
+    assert_eq!(rows.len(), 2, "two buckets: active=0 and active=1");
+    assert_eq!(rows[0].active, Some(0));
+    assert_eq!(rows[0].count, Some(2));
+    assert_eq!(rows[1].active, Some(1));
+    assert_eq!(rows[1].count, Some(2));
+}
+
+#[tokio::test]
+async fn test_groupby_with_aggregates() {
+    let client = setup_client().await;
+
+    insert_user(&client, "u1", "a@test.com", Some("A"), 20, true).await;
+    insert_user(&client, "u2", "b@test.com", Some("B"), 30, true).await;
+    insert_user(&client, "u3", "c@test.com", Some("C"), 40, false).await;
+    insert_user(&client, "u4", "d@test.com", Some("D"), 60, false).await;
+
+    let mut rows: Vec<GroupByActiveRow> = client
+        .raw_fetch_all_sqlite(
+            r#"SELECT "active" as "active",
+                      COUNT(*) as "count",
+                      AVG("age") as "avg_age",
+                      SUM("age") as "sum_age",
+                      MIN("age") as "min_age",
+                      MAX("age") as "max_age"
+               FROM "users"
+               WHERE 1=1
+               GROUP BY "active""#,
+        )
+        .await
+        .expect("group by active with aggregates");
+
+    rows.sort_by_key(|r| r.active.unwrap_or(-1));
+
+    // active=0 bucket: ages 40, 60
+    assert_eq!(rows[0].active, Some(0));
+    assert_eq!(rows[0].count, Some(2));
+    assert_eq!(rows[0].sum_age, Some(100));
+    assert_eq!(rows[0].min_age, Some(40));
+    assert_eq!(rows[0].max_age, Some(60));
+    let avg0 = rows[0].avg_age.expect("avg_age 0");
+    assert!((avg0 - 50.0).abs() < f64::EPSILON, "avg=50, got {avg0}");
+
+    // active=1 bucket: ages 20, 30
+    assert_eq!(rows[1].active, Some(1));
+    assert_eq!(rows[1].count, Some(2));
+    assert_eq!(rows[1].sum_age, Some(50));
+    assert_eq!(rows[1].min_age, Some(20));
+    assert_eq!(rows[1].max_age, Some(30));
+    let avg1 = rows[1].avg_age.expect("avg_age 1");
+    assert!((avg1 - 25.0).abs() < f64::EPSILON, "avg=25, got {avg1}");
+}
+
+#[tokio::test]
+async fn test_groupby_with_where_prefilter() {
+    let client = setup_client().await;
+
+    insert_user(&client, "u1", "a@test.com", Some("A"), 15, true).await;
+    insert_user(&client, "u2", "b@test.com", Some("B"), 25, true).await;
+    insert_user(&client, "u3", "c@test.com", Some("C"), 30, false).await;
+    insert_user(&client, "u4", "d@test.com", Some("D"), 50, false).await;
+
+    // WHERE age >= 20 keeps u2, u3, u4. Buckets: active=1 -> 1, active=0 -> 2.
+    let mut rows: Vec<GroupByActiveRow> = client
+        .raw_fetch_all_sqlite(
+            r#"SELECT "active" as "active", COUNT(*) as "count"
+               FROM "users"
+               WHERE 1=1 AND "age" >= 20
+               GROUP BY "active""#,
+        )
+        .await
+        .expect("group by with where");
+
+    rows.sort_by_key(|r| r.active.unwrap_or(-1));
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].active, Some(0));
+    assert_eq!(rows[0].count, Some(2));
+    assert_eq!(rows[1].active, Some(1));
+    assert_eq!(rows[1].count, Some(1));
+}
+
+#[tokio::test]
+async fn test_groupby_having_filters_buckets() {
+    let client = setup_client().await;
+
+    insert_user(&client, "u1", "a@test.com", Some("A"), 20, true).await;
+    insert_user(&client, "u2", "b@test.com", Some("B"), 25, true).await;
+    insert_user(&client, "u3", "c@test.com", Some("C"), 40, false).await;
+    insert_user(&client, "u4", "d@test.com", Some("D"), 60, false).await;
+
+    // HAVING AVG(age) > 30 keeps only the active=0 bucket (avg=50);
+    // active=1's avg is 22.5.
+    let rows: Vec<GroupByActiveRow> = client
+        .raw_fetch_all_sqlite(
+            r#"SELECT "active" as "active",
+                      COUNT(*) as "count",
+                      AVG("age") as "avg_age"
+               FROM "users"
+               WHERE 1=1
+               GROUP BY "active"
+               HAVING 1=1 AND AVG("age") > 30"#,
+        )
+        .await
+        .expect("group by having");
+
+    assert_eq!(rows.len(), 1, "only one bucket survives HAVING");
+    assert_eq!(rows[0].active, Some(0));
+    assert_eq!(rows[0].count, Some(2));
+}
+
+#[tokio::test]
+async fn test_groupby_having_count_threshold() {
+    let client = setup_client().await;
+
+    insert_user(&client, "u1", "a@test.com", Some("A"), 20, true).await;
+    insert_user(&client, "u2", "b@test.com", Some("B"), 25, true).await;
+    insert_user(&client, "u3", "c@test.com", Some("C"), 40, false).await;
+
+    // HAVING COUNT(*) >= 2 keeps active=1 (count=2), drops active=0 (count=1).
+    let rows: Vec<GroupByActiveRow> = client
+        .raw_fetch_all_sqlite(
+            r#"SELECT "active" as "active", COUNT(*) as "count"
+               FROM "users"
+               WHERE 1=1
+               GROUP BY "active"
+               HAVING 1=1 AND COUNT(*) >= 2"#,
+        )
+        .await
+        .expect("group by having count");
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].active, Some(1));
+    assert_eq!(rows[0].count, Some(2));
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct GroupByMultiKeyRow {
+    #[sqlx(default)]
+    active: Option<i64>,
+    #[sqlx(default)]
+    name: Option<String>,
+    #[sqlx(default)]
+    count: Option<i64>,
+}
+
+#[tokio::test]
+async fn test_groupby_multi_key() {
+    let client = setup_client().await;
+
+    insert_user(&client, "u1", "a@test.com", Some("A"), 20, true).await;
+    insert_user(&client, "u2", "b@test.com", Some("A"), 25, true).await;
+    insert_user(&client, "u3", "c@test.com", Some("B"), 40, true).await;
+    insert_user(&client, "u4", "d@test.com", Some("A"), 50, false).await;
+
+    let mut rows: Vec<GroupByMultiKeyRow> = client
+        .raw_fetch_all_sqlite(
+            r#"SELECT "active" as "active", "name" as "name", COUNT(*) as "count"
+               FROM "users"
+               WHERE 1=1
+               GROUP BY "active", "name""#,
+        )
+        .await
+        .expect("group by multi key");
+
+    rows.sort_by_key(|r| (r.active.unwrap_or(-1), r.name.clone().unwrap_or_default()));
+
+    // (active=0, name=A): u4 -> 1
+    // (active=1, name=A): u1, u2 -> 2
+    // (active=1, name=B): u3 -> 1
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].active, Some(0));
+    assert_eq!(rows[0].name.as_deref(), Some("A"));
+    assert_eq!(rows[0].count, Some(1));
+    assert_eq!(rows[1].active, Some(1));
+    assert_eq!(rows[1].name.as_deref(), Some("A"));
+    assert_eq!(rows[1].count, Some(2));
+    assert_eq!(rows[2].active, Some(1));
+    assert_eq!(rows[2].name.as_deref(), Some("B"));
+    assert_eq!(rows[2].count, Some(1));
+}

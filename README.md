@@ -15,87 +15,23 @@ Existing Rust ORMs require manually defining structs, writing migrations, and wi
 - **Easy migrations**: Automatic schema diffing with shadow database support
 - **Multi-database**: PostgreSQL and SQLite from day one
 
-## Quick Start
+## Documentation
 
-### 1. Install
+Full user guide, schema reference, client API, and migration workflows live
+in the **[ferriorm book](https://romanschejbal.github.io/ferriorm/)**.
+
+Quick links:
+
+- [Installation](https://romanschejbal.github.io/ferriorm/getting-started/installation.html)
+- [Quick Start](https://romanschejbal.github.io/ferriorm/getting-started/quick-start.html)
+- [Schema Reference](https://romanschejbal.github.io/ferriorm/schema/overview.html)
+- [Client API](https://romanschejbal.github.io/ferriorm/client/connecting.html)
+- [Migrations](https://romanschejbal.github.io/ferriorm/migrations/overview.html)
 
 ```bash
 cargo install ferriorm-cli
-```
-
-### 2. Initialize
-
-```bash
 ferriorm init --provider postgresql
-```
-
-### 3. Define your schema
-
-```prisma
-// schema.ferriorm
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-generator client {
-  output = "./src/generated"
-}
-
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("users")
-}
-```
-
-### 4. Generate & migrate
-
-```bash
 ferriorm migrate dev --name init
-```
-
-### 5. Use in your code
-
-```rust
-use generated::FerriormClient;
-use ferriorm_runtime::prelude::*;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = FerriormClient::connect("postgres://localhost/mydb").await?;
-
-    // Create
-    let user = client.user().create(user::data::UserCreateInput {
-        email: "alice@example.com".into(),
-        name: Some("Alice".into()),
-    }).exec().await?;
-
-    // Query with filters
-    let users = client.user()
-        .find_many(user::filter::UserWhereInput {
-            email: Some(StringFilter {
-                contains: Some("@example.com".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-        .order_by(user::order::UserOrderByInput::CreatedAt(SortOrder::Desc))
-        .take(10)
-        .exec().await?;
-
-    // Relations with batched loading
-    let users_with_posts = client.user()
-        .find_many(user::filter::UserWhereInput::default())
-        .include(user::UserInclude { posts: true, ..Default::default() })
-        .exec().await?;
-
-    Ok(())
-}
 ```
 
 ## Features
@@ -118,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Nullable filters with `IS NULL` / `IS NOT NULL` for every scalar type
 - Compound `@@unique([...])` keys materialize as `WhereUniqueInput` variants (usable by `upsert` as `ON CONFLICT` targets)
 - Ordering, pagination (`skip`/`take`), counting
+- Aggregates: `aggregate()` (avg/sum/min/max), and `group_by()` with bucketed `count`/`avg`/`sum`/`min`/`max` and a typed `having()` filter on the aggregate results
 - Relation loading via `include()` with batched queries (no N+1)
 
 ### Migrations
@@ -181,13 +118,13 @@ ferriorm is in active development. Here is what's done and what's planned:
 - [x] Raw SQL escape hatch (pool access + zero-bind helpers)
 - [x] `select()` for partial column loading
 - [x] Aggregate queries (avg, sum, min, max)
+- [x] Aggregate `group_by` (with `HAVING`)
 
 ### Planned
 - [ ] Compile-time query verification (hybrid sqlx approach)
 - [ ] MySQL support
 - [ ] Middleware/hooks (beforeCreate, afterUpdate)
 - [ ] Soft deletes
-- [ ] Aggregate groupBy
 - [ ] Cursor-based pagination
 - [ ] Schema formatting (`ferriorm format`)
 - [ ] LSP for .ferriorm files
