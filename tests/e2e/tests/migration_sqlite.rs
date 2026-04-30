@@ -558,11 +558,7 @@ fn f1_sqlite_inline_fk_with_mixed_cascade_actions() {
             db_type: None,
         }
     }
-    fn make_fk_field(
-        name: &str,
-        target: &str,
-        on_delete: ReferentialAction,
-    ) -> Field {
+    fn make_fk_field(name: &str, target: &str, on_delete: ReferentialAction) -> Field {
         let mut f = make_field(name, ScalarType::String, false);
         f.relation = Some(ResolvedRelation {
             name: None,
@@ -591,8 +587,16 @@ fn f1_sqlite_inline_fk_with_mixed_cascade_actions() {
         }
     }
 
-    let user = model("User", "users", vec![make_field("id", ScalarType::String, true)]);
-    let cat = model("Cat", "cats", vec![make_field("id", ScalarType::String, true)]);
+    let user = model(
+        "User",
+        "users",
+        vec![make_field("id", ScalarType::String, true)],
+    );
+    let cat = model(
+        "Cat",
+        "cats",
+        vec![make_field("id", ScalarType::String, true)],
+    );
     let post = model(
         "Post",
         "posts",
@@ -754,9 +758,7 @@ model A {
     let s1 = match ferriorm_parser::parse_and_validate(v1) {
         Ok(s) => s,
         Err(e) => {
-            panic!(
-                "@@map on enum is not yet supported; renaming an enum requires this. Got: {e}"
-            );
+            panic!("@@map on enum is not yet supported; renaming an enum requires this. Got: {e}");
         }
     };
     let s2 = ferriorm_parser::parse_and_validate(v2).expect("parse v2");
@@ -766,14 +768,12 @@ model A {
         &s2,
         ferriorm_core::types::DatabaseProvider::PostgreSQL,
     );
-    let sql = ferriorm_migrate::sql::renderer_for(
-        ferriorm_core::types::DatabaseProvider::PostgreSQL,
-    )
-    .render(&steps);
+    let sql =
+        ferriorm_migrate::sql::renderer_for(ferriorm_core::types::DatabaseProvider::PostgreSQL)
+            .render(&steps);
 
     assert!(
-        sql.to_uppercase().contains("ALTER TYPE")
-            && sql.to_uppercase().contains("RENAME"),
+        sql.to_uppercase().contains("ALTER TYPE") && sql.to_uppercase().contains("RENAME"),
         "enum rename via @@map must use ALTER TYPE ... RENAME TO; today the diff treats \
          it as drop+create which destroys data. Got:\n{sql}"
     );

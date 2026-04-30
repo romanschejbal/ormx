@@ -1237,10 +1237,7 @@ async fn d1_string_contains_with_percent_underscore_literals() {
 
     // Mirror fixed codegen path.
     let user_input = "100%_safe";
-    let pattern = format!(
-        "%{}%",
-        ferriorm_runtime::filter::like_escape(user_input)
-    );
+    let pattern = format!("%{}%", ferriorm_runtime::filter::like_escape(user_input));
 
     let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
         r#"SELECT "id", "email", "name", "age", "active", "created_at" FROM "users" WHERE "name" LIKE "#,
@@ -1315,10 +1312,7 @@ async fn d3_nullable_string_filter_some_none_is_null() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(
-        none_eq_count, 0,
-        "sanity: `= NULL` is always false in SQL"
-    );
+    assert_eq!(none_eq_count, 0, "sanity: `= NULL` is always false in SQL");
 
     // The right SQL: `IS NULL` finds the one nullable row.
     let is_null_count: i64 =

@@ -64,13 +64,13 @@ pub enum MigrationStep {
         variant: String,
     },
     /// The enum's database name changed via `@@map`. PG can rename in
-    /// place; SQLite emits a comment (enums are TEXT columns).
+    /// place; `SQLite` emits a comment (enums are TEXT columns).
     AlterEnumName {
         from_name: String,
         to_name: String,
     },
     /// The composite/primary-key columns changed on an existing table.
-    /// Postgres can DROP CONSTRAINT + ADD CONSTRAINT in place; SQLite
+    /// Postgres can DROP CONSTRAINT + ADD CONSTRAINT in place; `SQLite`
     /// requires a table rebuild and the renderer emits a comment.
     AlterPrimaryKey {
         table: String,
@@ -431,22 +431,23 @@ fn diff_column(
     }
 }
 
+/// Two `ForeignKeyDef`s are equivalent only when every component
+/// matches: name, source column, target table, target column, and both
+/// cascade actions. A change to `onDelete`, `onUpdate`, or
+/// `references: [..]` must therefore produce a Drop + Add pair so the
+/// database actually applies the new behavior.
+fn fks_equivalent(a: &ForeignKeyDef, b: &ForeignKeyDef) -> bool {
+    a.constraint_name == b.constraint_name
+        && a.column == b.column
+        && a.referenced_table == b.referenced_table
+        && a.referenced_column == b.referenced_column
+        && a.on_delete == b.on_delete
+        && a.on_update == b.on_update
+}
+
 fn diff_foreign_keys(from: &[Model], to: &[Model], steps: &mut Vec<MigrationStep>) {
     let from_fks = collect_foreign_keys(from);
     let to_fks = collect_foreign_keys(to);
-
-    // Compare full FK shape (referenced column + cascade actions),
-    // not just the constraint name. A change to `onDelete`, `onUpdate`,
-    // or `references: [..]` must produce a Drop + Add pair so the DB
-    // actually applies the new behavior.
-    fn fks_equivalent(a: &ForeignKeyDef, b: &ForeignKeyDef) -> bool {
-        a.constraint_name == b.constraint_name
-            && a.column == b.column
-            && a.referenced_table == b.referenced_table
-            && a.referenced_column == b.referenced_column
-            && a.on_delete == b.on_delete
-            && a.on_update == b.on_update
-    }
 
     for fk in &to_fks {
         if !from_fks.iter().any(|f| fks_equivalent(f, fk)) {

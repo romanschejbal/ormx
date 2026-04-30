@@ -51,6 +51,7 @@ impl SqlRenderer for SqliteRenderer {
     }
 }
 
+#[allow(clippy::too_many_lines)] // single match over MigrationStep variants; splitting fragments the dispatch
 fn render_step(step: &MigrationStep) -> String {
     match step {
         // SQLite has no CREATE TYPE — enums are stored as TEXT columns.

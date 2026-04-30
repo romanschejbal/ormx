@@ -286,7 +286,10 @@ async fn introspect_tables(
                 if cols.is_empty() {
                     None
                 } else {
-                    Some(Index { fields: cols, name: None })
+                    Some(Index {
+                        fields: cols,
+                        name: None,
+                    })
                 }
             })
             .collect();
@@ -583,7 +586,10 @@ async fn introspect_sqlite_tables(pool: &SqlitePool) -> Result<Vec<Model>, sqlx:
                 let col_names: Vec<String> =
                     idx_cols.iter().filter_map(|c| c.name.clone()).collect();
                 if !col_names.is_empty() {
-                    model_indexes.push(Index { fields: col_names, name: None });
+                    model_indexes.push(Index {
+                        fields: col_names,
+                        name: None,
+                    });
                 }
             }
         }

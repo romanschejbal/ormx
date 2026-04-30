@@ -9,8 +9,8 @@
 
 use ferriorm_core::ast::{
     BlockAttribute, DefaultValue, EnumDef, FieldAttribute, FieldDef, FieldType, Generator,
-    IndexAttribute, LiteralValue, ModelDef, ReferentialAction, RelationAttribute, SchemaFile,
-    Span, StringOrEnv,
+    IndexAttribute, LiteralValue, ModelDef, ReferentialAction, RelationAttribute, SchemaFile, Span,
+    StringOrEnv,
 };
 use pest::Parser;
 use pest_derive::Parser;

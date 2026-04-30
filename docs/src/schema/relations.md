@@ -196,13 +196,51 @@ A model can relate to itself. For example, a tree structure where each category 
 model Category {
   id       String     @id @default(uuid())
   name     String
-  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  parent   Category?  @relation(fields: [parentId], references: [id])
   parentId String?
-  children Category[] @relation("CategoryTree")
+  children Category[]
 }
 ```
 
-The string `"CategoryTree"` is a **relation name** that disambiguates the two relation fields on the same model. Both sides must use the same relation name.
+A simple self-reference like this — one forward FK + one back-reference list — does not need a relation name. The validator can pair the two fields unambiguously.
+
+---
+
+## Multiple Relations Between The Same Models
+
+When two relations connect the same pair of models, both sides must carry a **relation name** so the validator and code generator can pair forward and back references correctly.
+
+```prisma
+model User {
+  id       String @id @default(uuid())
+  authored Post[] @relation("Authored")
+  reviewed Post[] @relation("Reviewed")
+}
+
+model Post {
+  id         String @id @default(uuid())
+  title      String
+  authorId   String
+  reviewerId String
+  author     User   @relation("Authored", fields: [authorId], references: [id])
+  reviewer   User   @relation("Reviewed", fields: [reviewerId], references: [id])
+}
+```
+
+The first positional argument to `@relation` is the relation name. The same name must appear on both sides — `Authored` pairs `User.authored` with `Post.author`; `Reviewed` pairs `User.reviewed` with `Post.reviewer`.
+
+Both forms below are equivalent:
+
+```prisma
+author User @relation("Authored", fields: [authorId], references: [id])
+author User @relation(name: "Authored", fields: [authorId], references: [id])
+```
+
+If you forget to add a name where one is required, the validator reports the error:
+
+> Multiple relations from `Post` to `User` require disambiguation. Add `@relation("<Name>", ...)` to each related field on both sides.
+
+The same rule applies to **multiple self-references**: a model with two FKs to itself (e.g. an org chart with both a `manager` and a `mentor` pointing at `User`) needs distinct relation names.
 
 ---
 

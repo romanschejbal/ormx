@@ -152,10 +152,40 @@ model Post {
 
 | Argument | Required | Description |
 |---|---|---|
+| `name` (positional or `name:`) | When ambiguous | Disambiguator when two or more relations connect the same pair of models. See [Relation names](#relation-names). |
 | `fields` | Yes | Array of field names on _this_ model that store the foreign key |
 | `references` | Yes | Array of field names on the _related_ model that the foreign key points to |
 | `onDelete` | No | Referential action when the referenced record is deleted |
 | `onUpdate` | No | Referential action when the referenced record's key is updated |
+
+#### Relation names
+
+When two relations connect the same pair of models, you must distinguish them with a name:
+
+```prisma
+model User {
+  id       String @id
+  authored Post[] @relation("Authored")
+  reviewed Post[] @relation("Reviewed")
+}
+
+model Post {
+  id         String @id
+  authorId   String
+  reviewerId String
+  author     User   @relation("Authored", fields: [authorId], references: [id])
+  reviewer   User   @relation("Reviewed", fields: [reviewerId], references: [id])
+}
+```
+
+The name appears as the first positional argument or as a `name:` named argument — both forms are accepted:
+
+```prisma
+author User @relation("Authored", fields: [authorId], references: [id])
+author User @relation(name: "Authored", fields: [authorId], references: [id])
+```
+
+The same name must appear on both sides of a relation so the validator and code generator can pair them. Single-relation schemas don't need a name.
 
 #### Referential actions
 
@@ -231,7 +261,7 @@ Without `@@map`, the table name is derived automatically from the model name (Pa
 
 ---
 
-### `@@index([field1, field2, ...])`
+### `@@index([field1, field2, ...], name: "...")`
 
 Creates a **database index** on one or more fields. Indexes speed up queries that filter or sort by the indexed columns.
 
@@ -259,9 +289,27 @@ model Post {
 
 You can define multiple `@@index` attributes on the same model.
 
+#### Custom index name
+
+By default, the database index name is `idx_<table>_<col1>_<col2>...`. To override it (for instance to match an existing database object or to keep names short), pass `name:` (or `map:`, the Prisma-style alias):
+
+```prisma
+model Article {
+  id       String @id
+  slug     String
+  authorId String
+
+  @@index([slug, authorId], name: "ix_articles_slug_author")
+  // or, equivalently:
+  // @@index([slug, authorId], map: "ix_articles_slug_author")
+}
+```
+
+The custom name is used verbatim in the generated `CREATE INDEX` statement and is round-tripped through migration snapshots.
+
 ---
 
-### `@@unique([field1, field2, ...])`
+### `@@unique([field1, field2, ...], name: "...")`
 
 Creates a **composite unique constraint** across multiple fields. The database will reject any insert or update that would create a duplicate combination of values in these columns.
 
@@ -273,6 +321,12 @@ model Subscription {
 
   @@unique([userId, channel])
 }
+```
+
+Like `@@index`, you can override the auto-generated `uq_<table>_<cols>` name with `name:` (or `map:` as alias):
+
+```prisma
+@@unique([userId, channel], name: "uq_subs_user_channel")
 ```
 
 Each `@@unique` also materializes as a struct-style variant on the model's `WhereUniqueInput` enum, so you can use it with `find_unique`, `update`, `delete`, and `upsert`. The variant name is the PascalCase concatenation of the field names:

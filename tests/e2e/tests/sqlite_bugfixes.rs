@@ -655,7 +655,11 @@ async fn e3_on_conflict_ignore_with_id_none() {
         .execute(&pool)
         .await
         .expect("INSERT OR IGNORE must not error on conflict");
-    assert_eq!(result.rows_affected(), 0, "conflicting insert must be ignored");
+    assert_eq!(
+        result.rows_affected(),
+        0,
+        "conflicting insert must be ignored"
+    );
 
     let count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM "tags""#)
         .fetch_one(&pool)
@@ -733,7 +737,10 @@ async fn e4_compound_unique_upsert_targeting() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(email_status, "paused", "email row was updated by the second upsert");
+    assert_eq!(
+        email_status, "paused",
+        "email row was updated by the second upsert"
+    );
 }
 
 /// E5: regression for `705a0ab`. A parent with optional FK children:
@@ -796,7 +803,8 @@ async fn e5_optional_fk_one_to_many_loads_filter_map() {
 
     // And the filter_map output round-trips through an IN-list query
     // without including NULL — that's what the relation loader does.
-    let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(r#"SELECT "id" FROM "parents" WHERE "id" IN ("#);
+    let mut qb =
+        sqlx::QueryBuilder::<sqlx::Sqlite>::new(r#"SELECT "id" FROM "parents" WHERE "id" IN ("#);
     let mut sep = qb.separated(", ");
     for id in &parent_ids {
         sep.push_bind(*id);

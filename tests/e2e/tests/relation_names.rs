@@ -229,8 +229,7 @@ model P {
     );
 
     // syn must accept the generated file as valid Rust.
-    syn::parse_file(&user_rs)
-        .unwrap_or_else(|e| panic!("generated u.rs is not valid Rust: {e}"));
+    syn::parse_file(&user_rs).unwrap_or_else(|e| panic!("generated u.rs is not valid Rust: {e}"));
 }
 
 #[test]

@@ -40,8 +40,7 @@ fn generate_to_tempdir(schema_str: &str) -> Result<tempfile::TempDir, String> {
 
 fn assert_all_generated_files_parse(tmp: &Path) {
     let out = tmp.join("generated");
-    let entries =
-        std::fs::read_dir(&out).unwrap_or_else(|e| panic!("read_dir {out:?}: {e}"));
+    let entries = std::fs::read_dir(&out).unwrap_or_else(|e| panic!("read_dir {out:?}: {e}"));
     for entry in entries {
         let path = entry.unwrap().path();
         if path.extension().and_then(|s| s.to_str()) != Some("rs") {
@@ -168,8 +167,7 @@ model Post {
 
     // The User-side accessors must wire through their respective FK
     // columns: `authored` -> author_id, `reviewed` -> reviewer_id.
-    let user_src =
-        std::fs::read_to_string(tmp.path().join("generated").join("user.rs")).unwrap();
+    let user_src = std::fs::read_to_string(tmp.path().join("generated").join("user.rs")).unwrap();
     assert!(
         user_src.contains("author_id"),
         "User accessors must reference author_id; codegen failed to pair `authored` \

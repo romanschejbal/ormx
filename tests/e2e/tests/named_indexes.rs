@@ -134,5 +134,8 @@ model Article {
 
     // Idempotence: diff(B, B) is empty.
     let steps = diff::diff_schemas(&s, &back, DatabaseProvider::SQLite);
-    assert!(steps.is_empty(), "named index must not re-emit. Steps: {steps:?}");
+    assert!(
+        steps.is_empty(),
+        "named index must not re-emit. Steps: {steps:?}"
+    );
 }

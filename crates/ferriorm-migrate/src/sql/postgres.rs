@@ -104,7 +104,9 @@ fn render_step(step: &MigrationStep) -> String {
                 .join(", ");
             format!("ALTER TABLE \"{table}\" ADD CONSTRAINT \"{name}\" UNIQUE ({cols});\n")
         }
-        MigrationStep::AlterPrimaryKey { table, to_columns, .. } => {
+        MigrationStep::AlterPrimaryKey {
+            table, to_columns, ..
+        } => {
             let pk_name = format!("{table}_pkey");
             let cols = to_columns
                 .iter()

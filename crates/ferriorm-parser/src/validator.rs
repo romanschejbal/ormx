@@ -119,10 +119,7 @@ fn validate_relation_disambiguation(models: &[Model]) -> Result<(), CoreError> {
 
             let mut seen_names: HashSet<&str> = HashSet::new();
             for field in group {
-                let name = field
-                    .relation
-                    .as_ref()
-                    .and_then(|r| r.name.as_deref());
+                let name = field.relation.as_ref().and_then(|r| r.name.as_deref());
                 let Some(n) = name else {
                     return Err(CoreError::Validation {
                         message: format!(
@@ -235,6 +232,7 @@ fn validate_models(ast: &ast::SchemaFile, enums: &[Enum]) -> Result<Vec<Model>, 
     Ok(result)
 }
 
+#[allow(clippy::too_many_lines)] // sequential validation passes; splitting hides the order
 fn validate_model(
     model_def: &ast::ModelDef,
     enum_names: &HashSet<&str>,
@@ -275,15 +273,12 @@ fn validate_model(
 
     // Field-name set for B4 (block-attribute field-existence checks).
     // We accept either the schema field name or the snake_case form.
-    let field_name_set: HashSet<&str> = fields
-        .iter()
-        .map(|f| f.name.as_str())
-        .collect();
+    let field_name_set: HashSet<&str> = fields.iter().map(|f| f.name.as_str()).collect();
     let field_db_set: HashSet<&str> = fields.iter().map(|f| f.db_name.as_str()).collect();
     let field_resolver = |needle: &str| -> Option<&Field> {
-        fields.iter().find(|f| {
-            f.name == needle || f.db_name == needle || to_snake_case(&f.name) == needle
-        })
+        fields
+            .iter()
+            .find(|f| f.name == needle || f.db_name == needle || to_snake_case(&f.name) == needle)
     };
 
     let primary_key = if let Some(composite_fields) = composite_id {
@@ -379,6 +374,7 @@ fn validate_model(
     })
 }
 
+#[allow(clippy::too_many_lines)] // sequential per-field checks; splitting hides the order
 fn validate_field(
     field_def: &ast::FieldDef,
     model_name: &str,
@@ -445,7 +441,7 @@ fn validate_field(
     if matches!(default, Some(ast::DefaultValue::AutoIncrement)) {
         let is_int_scalar = matches!(
             field_type,
-            FieldKind::Scalar(ScalarType::Int) | FieldKind::Scalar(ScalarType::BigInt)
+            FieldKind::Scalar(ScalarType::Int | ScalarType::BigInt)
         );
         if !is_int_scalar {
             return Err(CoreError::InvalidDefault {

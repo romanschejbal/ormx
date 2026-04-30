@@ -320,14 +320,15 @@ fn user_post_schema(on_delete: ReferentialAction) -> Schema {
     make_schema(vec![user, post], vec![])
 }
 
-/// A4: changing `onDelete: Cascade` -> `Restrict` must emit a DropForeignKey
-/// + AddForeignKey pair, otherwise the database keeps the old action and
-/// the user's intended migration is silently dropped.
+/// A4: changing `onDelete: Cascade` -> `Restrict` must emit a
+/// DropForeignKey + AddForeignKey pair, otherwise the database keeps
+/// the old action and the user's intended migration is silently
+/// dropped.
 ///
 /// Targets `crates/ferriorm-migrate/src/diff.rs:390` (`diff_foreign_keys`):
 /// the constraint name is `fk_{table}_{related}_{fk_col}` and does NOT
 /// include the cascade action, so identical names compare equal even when
-/// actions differ. **Expected to fail today.**
+/// actions differ.
 #[test]
 fn fk_cascade_action_change_redrops_fk() {
     let from = user_post_schema(ReferentialAction::Cascade);
@@ -414,9 +415,9 @@ fn fk_target_column_change() {
     let has_drop_fk = steps
         .iter()
         .any(|s| matches!(s, MigrationStep::DropForeignKey { .. }));
-    let has_add_fk = steps.iter().any(|s| {
-        matches!(s, MigrationStep::AddForeignKey(fk) if fk.referenced_column == "legacy_id")
-    });
+    let has_add_fk = steps.iter().any(
+        |s| matches!(s, MigrationStep::AddForeignKey(fk) if fk.referenced_column == "legacy_id"),
+    );
 
     assert!(
         has_drop_fk && has_add_fk,
@@ -465,8 +466,11 @@ fn composite_pk_change() {
         m
     };
 
-    let steps =
-        diff::diff_schemas(&make_schema(vec![from], vec![]), &make_schema(vec![to], vec![]), DatabaseProvider::SQLite);
+    let steps = diff::diff_schemas(
+        &make_schema(vec![from], vec![]),
+        &make_schema(vec![to], vec![]),
+        DatabaseProvider::SQLite,
+    );
 
     assert!(
         !steps.is_empty(),

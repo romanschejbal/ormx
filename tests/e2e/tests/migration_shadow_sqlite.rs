@@ -456,12 +456,18 @@ model U {
     let has_drop = steps
         .iter()
         .any(|s| matches!(s, MigrationStep::DropColumn { column, .. } if column == "email"));
-    let has_add = steps
-        .iter()
-        .any(|s| matches!(s, MigrationStep::AddColumn { column, .. } if column.name == "email_address"));
+    let has_add = steps.iter().any(
+        |s| matches!(s, MigrationStep::AddColumn { column, .. } if column.name == "email_address"),
+    );
 
-    assert!(has_drop, "current behavior: drop the old column. Steps: {steps:?}");
-    assert!(has_add, "current behavior: add the new column. Steps: {steps:?}");
+    assert!(
+        has_drop,
+        "current behavior: drop the old column. Steps: {steps:?}"
+    );
+    assert!(
+        has_add,
+        "current behavior: add the new column. Steps: {steps:?}"
+    );
     // If a rename-detection feature lands, this test must be updated:
     // it should expect a single rename-style step that preserves data.
 }

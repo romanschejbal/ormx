@@ -52,9 +52,8 @@ pub fn collect_relations<'a>(model: &'a Model, schema: &'a Schema) -> Vec<Relati
             if let FieldKind::Model(related_name) = &field.field_type {
                 let related = schema.models.iter().find(|m| m.name == *related_name);
                 if let Some(related_model) = related {
-                    let (fk_column, ref_column) =
-                        find_back_reference(model, related_model, None)
-                            .unwrap_or_else(|| ("id".into(), "id".into()));
+                    let (fk_column, ref_column) = find_back_reference(model, related_model, None)
+                        .unwrap_or_else(|| ("id".into(), "id".into()));
 
                     relations.push(RelationInfo {
                         field,
