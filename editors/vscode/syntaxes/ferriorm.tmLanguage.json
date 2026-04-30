@@ -1,0 +1,94 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ferriorm",
+  "scopeName": "source.ferriorm",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#blocks" },
+    { "include": "#attributes" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#types" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "match": "//.*$",
+          "name": "comment.line.double-slash.ferriorm"
+        }
+      ]
+    },
+    "blocks": {
+      "patterns": [
+        {
+          "match": "\\b(datasource|generator|model|enum)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.ferriorm" },
+            "2": { "name": "entity.name.type.ferriorm" }
+          }
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "match": "@@(id|unique|index|map)\\b",
+          "name": "support.function.attribute.block.ferriorm"
+        },
+        {
+          "match": "@(id|unique|default|relation|map|updatedAt)\\b",
+          "name": "support.function.attribute.field.ferriorm"
+        },
+        {
+          "match": "@db\\.[A-Za-z_][A-Za-z0-9_]*",
+          "name": "support.function.attribute.db.ferriorm"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.ferriorm",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.ferriorm"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "match": "\\b-?[0-9]+(\\.[0-9]+)?\\b",
+          "name": "constant.numeric.ferriorm"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "match": "\\b(String|Int|BigInt|Boolean|Float|DateTime|Json|Bytes)\\b",
+          "name": "support.type.builtin.ferriorm"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
+          "name": "entity.name.type.ferriorm"
+        },
+        {
+          "match": "\\b[a-z_][A-Za-z0-9_]*\\b",
+          "name": "variable.other.ferriorm"
+        }
+      ]
+    }
+  }
+}

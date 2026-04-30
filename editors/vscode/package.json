@@ -1,0 +1,67 @@
+{
+  "name": "ferriorm",
+  "displayName": "ferriorm",
+  "description": "Syntax highlighting and language server support for .ferriorm schema files",
+  "version": "0.2.1",
+  "publisher": "ferriorm",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:ferriorm"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "ferriorm",
+        "aliases": ["ferriorm", "Ferriorm"],
+        "extensions": [".ferriorm"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ferriorm",
+        "scopeName": "source.ferriorm",
+        "path": "./syntaxes/ferriorm.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "ferriorm",
+      "properties": {
+        "ferriorm.lsp.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the ferriorm-lsp binary. When empty, the extension looks for `ferriorm-lsp` on PATH."
+        },
+        "ferriorm.lsp.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP communication."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . --watch",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

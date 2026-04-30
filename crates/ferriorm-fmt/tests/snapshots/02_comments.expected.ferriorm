@@ -1,0 +1,23 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Roles a user may have.
+enum Role {
+  User
+  Admin
+}
+
+// User holds an account.
+// Mapped to the `users` table.
+model User {
+  id   String  @id @default(uuid())
+  // Display name shown in the UI.
+  name String? // optional
+  role Role    @default(User)
+
+  @@map("users")
+}
+
+// This is the project schema.

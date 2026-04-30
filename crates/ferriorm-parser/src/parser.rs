@@ -8,13 +8,14 @@
 //! resolution, constraint checking) is performed by [`crate::validator`].
 
 use ferriorm_core::ast::{
-    BlockAttribute, DefaultValue, EnumDef, FieldAttribute, FieldDef, FieldType, Generator,
-    IndexAttribute, LiteralValue, ModelDef, ReferentialAction, RelationAttribute, SchemaFile, Span,
-    StringOrEnv,
+    BlockAttrEntry, BlockAttribute, DefaultValue, EnumDef, FieldAttribute, FieldDef, FieldType,
+    Generator, IndexAttribute, LiteralValue, ModelDef, ReferentialAction, RelationAttribute,
+    SchemaFile, Span, StringOrEnv,
 };
 use pest::Parser;
 use pest_derive::Parser;
 
+use crate::comments::CommentAttacher;
 use crate::error::ParseError;
 
 #[derive(Parser)]
@@ -32,14 +33,22 @@ struct FerriormParser;
 /// Panics if the PEG grammar produces no top-level pair, which indicates
 /// a bug in the grammar definition.
 pub fn parse(source: &str) -> Result<SchemaFile, ParseError> {
-    let pairs = FerriormParser::parse(Rule::schema, source)
-        .map_err(|e| ParseError::Syntax(e.to_string()))?;
+    let pairs = FerriormParser::parse(Rule::schema, source).map_err(|e| {
+        let span = Some(pest_error_span(&e));
+        ParseError::Syntax {
+            message: e.to_string(),
+            span,
+        }
+    })?;
+
+    let mut attacher = CommentAttacher::new(source);
 
     let mut schema = SchemaFile {
         datasource: None,
         generators: Vec::new(),
         enums: Vec::new(),
         models: Vec::new(),
+        trailing_comments: Vec::new(),
     };
 
     // The top-level parse result contains a single `schema` pair; iterate its inner pairs.
@@ -47,22 +56,32 @@ pub fn parse(source: &str) -> Result<SchemaFile, ParseError> {
     for pair in schema_pair.into_inner() {
         match pair.as_rule() {
             Rule::datasource_block => {
-                schema.datasource = Some(parse_datasource(pair)?);
+                schema.datasource = Some(parse_datasource(pair, &mut attacher)?);
             }
             Rule::generator_block => {
-                schema.generators.push(parse_generator(pair));
+                schema.generators.push(parse_generator(pair, &mut attacher));
             }
             Rule::enum_block => {
-                schema.enums.push(parse_enum(pair));
+                schema.enums.push(parse_enum(pair, &mut attacher));
             }
             Rule::model_block => {
-                schema.models.push(parse_model(pair)?);
+                schema.models.push(parse_model(pair, &mut attacher)?);
             }
             _ => {}
         }
     }
 
+    schema.trailing_comments = attacher.drain_remaining();
+
     Ok(schema)
+}
+
+fn pest_error_span(err: &pest::error::Error<Rule>) -> Span {
+    use pest::error::InputLocation;
+    match err.location {
+        InputLocation::Pos(p) => Span { start: p, end: p },
+        InputLocation::Span((s, e)) => Span { start: s, end: e },
+    }
 }
 
 fn span_from(pair: &pest::iterators::Pair<'_, Rule>) -> Span {
@@ -75,8 +94,10 @@ fn span_from(pair: &pest::iterators::Pair<'_, Rule>) -> Span {
 
 fn parse_datasource(
     pair: pest::iterators::Pair<'_, Rule>,
+    attacher: &mut CommentAttacher,
 ) -> Result<ferriorm_core::ast::Datasource, ParseError> {
     let span = span_from(&pair);
+    let comments = attacher.container_leading(span);
     let mut inner = pair.into_inner();
     let name = inner.next().unwrap().as_str().to_string();
 
@@ -106,12 +127,17 @@ fn parse_datasource(
         name,
         provider,
         url,
+        comments,
         span,
     })
 }
 
-fn parse_generator(pair: pest::iterators::Pair<'_, Rule>) -> Generator {
+fn parse_generator(
+    pair: pest::iterators::Pair<'_, Rule>,
+    attacher: &mut CommentAttacher,
+) -> Generator {
     let span = span_from(&pair);
+    let comments = attacher.container_leading(span);
     let mut inner = pair.into_inner();
     let name = inner.next().unwrap().as_str().to_string();
 
@@ -130,11 +156,17 @@ fn parse_generator(pair: pest::iterators::Pair<'_, Rule>) -> Generator {
         }
     }
 
-    Generator { name, output, span }
+    Generator {
+        name,
+        output,
+        comments,
+        span,
+    }
 }
 
-fn parse_enum(pair: pest::iterators::Pair<'_, Rule>) -> EnumDef {
+fn parse_enum(pair: pest::iterators::Pair<'_, Rule>, attacher: &mut CommentAttacher) -> EnumDef {
     let span = span_from(&pair);
+    let comments = attacher.container_leading(span);
     let mut inner = pair.into_inner();
     let name = inner.next().unwrap().as_str().to_string();
 
@@ -158,12 +190,17 @@ fn parse_enum(pair: pest::iterators::Pair<'_, Rule>) -> EnumDef {
         name,
         variants,
         db_name,
+        comments,
         span,
     }
 }
 
-fn parse_model(pair: pest::iterators::Pair<'_, Rule>) -> Result<ModelDef, ParseError> {
+fn parse_model(
+    pair: pest::iterators::Pair<'_, Rule>,
+    attacher: &mut CommentAttacher,
+) -> Result<ModelDef, ParseError> {
     let span = span_from(&pair);
+    let comments = attacher.container_leading(span);
     let mut inner = pair.into_inner();
     let name = inner.next().unwrap().as_str().to_string();
 
@@ -173,35 +210,69 @@ fn parse_model(pair: pest::iterators::Pair<'_, Rule>) -> Result<ModelDef, ParseE
     for member in inner {
         match member.as_rule() {
             Rule::field_def => {
-                fields.push(parse_field(member)?);
+                fields.push(parse_field(member, attacher)?);
             }
             Rule::block_attr_index => {
-                attributes.push(BlockAttribute::Index(parse_index_attribute(member)));
+                attributes.push(parse_block_attr_entry(member, attacher, |p| {
+                    BlockAttribute::Index(parse_index_attribute(p))
+                }));
             }
             Rule::block_attr_unique => {
-                attributes.push(BlockAttribute::Unique(parse_index_attribute(member)));
+                attributes.push(parse_block_attr_entry(member, attacher, |p| {
+                    BlockAttribute::Unique(parse_index_attribute(p))
+                }));
             }
             Rule::block_attr_map => {
-                let s = member.into_inner().next().unwrap().as_str();
-                attributes.push(BlockAttribute::Map(unquote(s)));
+                attributes.push(parse_block_attr_entry(member, attacher, |p| {
+                    let s = p.into_inner().next().unwrap().as_str();
+                    BlockAttribute::Map(unquote(s))
+                }));
             }
             Rule::block_attr_id => {
-                attributes.push(BlockAttribute::Id(parse_field_list_from_block_attr(member)));
+                attributes.push(parse_block_attr_entry(member, attacher, |p| {
+                    BlockAttribute::Id(parse_field_list_from_block_attr(p))
+                }));
             }
             _ => {}
         }
     }
 
+    let trailing_comments = attacher.drain_floating_in(span.start, span.end);
+
     Ok(ModelDef {
         name,
         fields,
         attributes,
+        trailing_comments,
+        comments,
         span,
     })
 }
 
-fn parse_field(pair: pest::iterators::Pair<'_, Rule>) -> Result<FieldDef, ParseError> {
+fn parse_block_attr_entry<F>(
+    pair: pest::iterators::Pair<'_, Rule>,
+    attacher: &mut CommentAttacher,
+    build: F,
+) -> BlockAttrEntry
+where
+    F: FnOnce(pest::iterators::Pair<'_, Rule>) -> BlockAttribute,
+{
     let span = span_from(&pair);
+    let comments = attacher.leaf_comments(span);
+    let kind = build(pair);
+    BlockAttrEntry {
+        kind,
+        comments,
+        span,
+    }
+}
+
+fn parse_field(
+    pair: pest::iterators::Pair<'_, Rule>,
+    attacher: &mut CommentAttacher,
+) -> Result<FieldDef, ParseError> {
+    let span = span_from(&pair);
+    let comments = attacher.leaf_comments(span);
     let mut inner = pair.into_inner();
 
     let name = inner.next().unwrap().as_str().to_string();
@@ -219,6 +290,7 @@ fn parse_field(pair: pest::iterators::Pair<'_, Rule>) -> Result<FieldDef, ParseE
         name,
         field_type,
         attributes,
+        comments,
         span,
     })
 }
@@ -285,7 +357,7 @@ fn parse_default_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<DefaultV
                 "cuid" => Ok(DefaultValue::Cuid),
                 "autoincrement" => Ok(DefaultValue::AutoIncrement),
                 "now" => Ok(DefaultValue::Now),
-                other => Err(ParseError::Syntax(format!(
+                other => Err(ParseError::syntax(format!(
                     "Unknown default function: {other}()"
                 ))),
             }
@@ -298,12 +370,12 @@ fn parse_default_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<DefaultV
             if s.contains('.') {
                 Ok(DefaultValue::Literal(LiteralValue::Float(
                     s.parse()
-                        .map_err(|e| ParseError::Syntax(format!("Invalid float: {e}")))?,
+                        .map_err(|e| ParseError::syntax(format!("Invalid float: {e}")))?,
                 )))
             } else {
                 Ok(DefaultValue::Literal(LiteralValue::Int(
                     s.parse()
-                        .map_err(|e| ParseError::Syntax(format!("Invalid int: {e}")))?,
+                        .map_err(|e| ParseError::syntax(format!("Invalid int: {e}")))?,
                 )))
             }
         }
@@ -315,7 +387,7 @@ fn parse_default_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<DefaultV
             let name = pair.into_inner().next().unwrap().as_str().to_string();
             Ok(DefaultValue::EnumVariant(name))
         }
-        _ => Err(ParseError::Syntax(format!(
+        _ => Err(ParseError::syntax(format!(
             "Unexpected default value: {:?}",
             pair.as_rule()
         ))),
@@ -429,16 +501,16 @@ fn parse_string_or_env(pair: &pest::iterators::Pair<'_, Rule>) -> Result<StringO
             if func_name == "env" {
                 let arg = inner
                     .next()
-                    .ok_or_else(|| ParseError::Syntax("env() requires a string argument".into()))?;
+                    .ok_or_else(|| ParseError::syntax("env() requires a string argument"))?;
                 Ok(StringOrEnv::Env(unquote(arg.as_str())))
             } else {
-                Err(ParseError::Syntax(format!(
+                Err(ParseError::syntax(format!(
                     "Expected env(), got {func_name}()"
                 )))
             }
         }
         Rule::string_literal => Ok(StringOrEnv::Literal(unquote(pair.as_str()))),
-        _ => Err(ParseError::Syntax(format!(
+        _ => Err(ParseError::syntax(format!(
             "Expected string or env(), got {:?}",
             pair.as_rule()
         ))),
@@ -568,12 +640,12 @@ model User {
         assert!(
             user.attributes
                 .iter()
-                .any(|a| matches!(a, BlockAttribute::Index(idx) if idx.fields == ["email"]))
+                .any(|a| matches!(&a.kind, BlockAttribute::Index(idx) if idx.fields == ["email"]))
         );
         assert!(
             user.attributes
                 .iter()
-                .any(|a| matches!(a, BlockAttribute::Map(name) if name == "users"))
+                .any(|a| matches!(&a.kind, BlockAttribute::Map(name) if name == "users"))
         );
     }
 
@@ -642,12 +714,9 @@ model PostTag {
 
         let schema = parse(schema_str).expect("should parse");
         let model = &schema.models[0];
-        assert!(
-            model
-                .attributes
-                .iter()
-                .any(|a| matches!(a, BlockAttribute::Id(fields) if fields == &["postId", "tagId"]))
-        );
+        assert!(model.attributes.iter().any(
+            |a| matches!(&a.kind, BlockAttribute::Id(fields) if fields == &["postId", "tagId"])
+        ));
     }
 
     #[test]
@@ -658,23 +727,45 @@ model PostTag {
 
     #[test]
     fn test_parse_with_comments() {
-        let schema_str = r#"
-// This is a comment
+        let schema_str = r#"// File header comment
+
+// Datasource description
 datasource db {
   provider = "postgresql" // inline comment
   url      = env("DATABASE_URL")
 }
 
-// Another comment
+// User model holds accounts.
+// Second leading line.
 model User {
   id String @id @default(uuid())
-  // A commented field
-  name String?
+  // The display name
+  name String? // optional
 }
 "#;
 
         let schema = parse(schema_str).expect("should parse with comments");
-        assert!(schema.datasource.is_some());
-        assert_eq!(schema.models[0].fields.len(), 2);
+        let ds = schema.datasource.as_ref().expect("datasource");
+        assert_eq!(ds.comments.leading, vec!["Datasource description"]);
+
+        let user = &schema.models[0];
+        assert_eq!(
+            user.comments.leading,
+            vec!["User model holds accounts.", "Second leading line."]
+        );
+        assert_eq!(user.fields.len(), 2);
+
+        let name_field = &user.fields[1];
+        assert_eq!(name_field.comments.leading, vec!["The display name"]);
+        assert_eq!(name_field.comments.trailing.as_deref(), Some("optional"));
+
+        // The "File header comment" has no following node attached and ends up
+        // as a floating end-of-file comment.
+        assert!(
+            schema
+                .trailing_comments
+                .iter()
+                .any(|c| c == "File header comment")
+        );
     }
 }

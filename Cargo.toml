@@ -4,6 +4,8 @@ members = [
     "crates/ferriorm-core",
     "crates/ferriorm-parser",
     "crates/ferriorm-codegen",
+    "crates/ferriorm-fmt",
+    "crates/ferriorm-lsp",
     "crates/ferriorm-migrate",
     "crates/ferriorm-runtime",
     "crates/ferriorm-cli",
@@ -25,8 +27,13 @@ categories = ["database"]
 ferriorm-core = { path = "crates/ferriorm-core", version = "0.2.1" }
 ferriorm-parser = { path = "crates/ferriorm-parser", version = "0.2.1" }
 ferriorm-codegen = { path = "crates/ferriorm-codegen", version = "0.2.1" }
+ferriorm-fmt = { path = "crates/ferriorm-fmt", version = "0.2.1" }
 ferriorm-migrate = { path = "crates/ferriorm-migrate", version = "0.2.1" }
 ferriorm-runtime = { path = "crates/ferriorm-runtime", version = "0.2.1" }
+
+# LSP / async
+tower-lsp = "0.20"
+dashmap = "6"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "chrono", "uuid"] }

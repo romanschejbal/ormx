@@ -19,6 +19,7 @@
 //! - `ferriorm_codegen` -- consumes the `Schema` IR to generate Rust code.
 //! - `ferriorm_migrate` -- consumes the `Schema` IR to produce migrations.
 
+pub mod comments;
 pub mod error;
 pub mod parser;
 pub mod validator;
@@ -35,5 +36,5 @@ pub fn parse_and_validate(
     source: &str,
 ) -> Result<ferriorm_core::schema::Schema, error::ParseError> {
     let ast = parse(source)?;
-    validate(&ast).map_err(|e| error::ParseError::Validation(e.to_string()))
+    Ok(validate(&ast)?)
 }

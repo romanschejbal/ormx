@@ -119,6 +119,8 @@ ferriorm is in active development. Here is what's done and what's planned:
 - [x] `select()` for partial column loading
 - [x] Aggregate queries (avg, sum, min, max)
 - [x] Aggregate `group_by` (with `HAVING`)
+- [x] Schema formatting (`ferriorm format`)
+- [x] LSP for .ferriorm files (`ferriorm-lsp` + VS Code extension)
 
 ### Planned
 - [ ] Compile-time query verification (hybrid sqlx approach)
@@ -126,8 +128,6 @@ ferriorm is in active development. Here is what's done and what's planned:
 - [ ] Middleware/hooks (beforeCreate, afterUpdate)
 - [ ] Soft deletes
 - [ ] Cursor-based pagination
-- [ ] Schema formatting (`ferriorm format`)
-- [ ] LSP for .ferriorm files
 - [ ] Seeding support
 
 ## License

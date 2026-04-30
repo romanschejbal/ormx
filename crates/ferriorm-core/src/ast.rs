@@ -15,6 +15,25 @@ pub struct Span {
     pub end: usize,
 }
 
+/// Comments attached to an AST node.
+///
+/// `leading` are standalone `// ...` lines that appear immediately before the
+/// node (with no blank line separating them). `trailing` is a `// ...` comment
+/// on the same line as the node's last token. Comments are preserved by the
+/// parser so that downstream tooling (e.g. the formatter) can round-trip them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Comments {
+    pub leading: Vec<String>,
+    pub trailing: Option<String>,
+}
+
+impl Comments {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.leading.is_empty() && self.trailing.is_none()
+    }
+}
+
 /// The top-level schema file.
 #[derive(Debug, Clone)]
 pub struct SchemaFile {
@@ -22,6 +41,8 @@ pub struct SchemaFile {
     pub generators: Vec<Generator>,
     pub enums: Vec<EnumDef>,
     pub models: Vec<ModelDef>,
+    /// Comments that appear at the end of the file, with no following node.
+    pub trailing_comments: Vec<String>,
 }
 
 /// `datasource db { ... }`
@@ -30,6 +51,7 @@ pub struct Datasource {
     pub name: String,
     pub provider: String,
     pub url: StringOrEnv,
+    pub comments: Comments,
     pub span: Span,
 }
 
@@ -45,6 +67,7 @@ pub enum StringOrEnv {
 pub struct Generator {
     pub name: String,
     pub output: Option<String>,
+    pub comments: Comments,
     pub span: Span,
 }
 
@@ -54,6 +77,7 @@ pub struct EnumDef {
     pub name: String,
     pub variants: Vec<String>,
     pub db_name: Option<String>,
+    pub comments: Comments,
     pub span: Span,
 }
 
@@ -62,7 +86,11 @@ pub struct EnumDef {
 pub struct ModelDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
-    pub attributes: Vec<BlockAttribute>,
+    pub attributes: Vec<BlockAttrEntry>,
+    /// Comments that appear inside the model body but have no following
+    /// field/attribute (e.g. before the closing `}`).
+    pub trailing_comments: Vec<String>,
+    pub comments: Comments,
     pub span: Span,
 }
 
@@ -72,6 +100,7 @@ pub struct FieldDef {
     pub name: String,
     pub field_type: FieldType,
     pub attributes: Vec<FieldAttribute>,
+    pub comments: Comments,
     pub span: Span,
 }
 
@@ -136,6 +165,14 @@ pub enum ReferentialAction {
     NoAction,
     SetNull,
     SetDefault,
+}
+
+/// A block-level attribute with its attached comments and source span.
+#[derive(Debug, Clone)]
+pub struct BlockAttrEntry {
+    pub kind: BlockAttribute,
+    pub comments: Comments,
+    pub span: Span,
 }
 
 /// Block-level attributes (e.g., `@@index`, `@@unique`, `@@map`, `@@id`).

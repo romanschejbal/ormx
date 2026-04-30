@@ -1,0 +1,4 @@
+# Schema files always use LF, regardless of platform autocrlf settings.
+# The formatter emits LF; mismatched checkouts on Windows would otherwise break
+# the round-trip snapshot tests in `crates/ferriorm-fmt/tests/`.
+*.ferriorm text eol=lf
