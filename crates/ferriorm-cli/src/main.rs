@@ -37,6 +37,18 @@ enum Commands {
     /// Generate the Rust client from the schema
     Generate,
 
+    /// Format `.ferriorm` files in place (or check formatting with `--check`)
+    Format {
+        /// Print a diff for each file that would change and exit 1 (no writes).
+        #[arg(long)]
+        check: bool,
+        /// Read source from stdin and write the formatted output to stdout.
+        #[arg(long)]
+        stdin: bool,
+        /// Files or directories to format. Defaults to `--schema` when empty.
+        paths: Vec<String>,
+    },
+
     /// Migration management
     Migrate {
         #[command(subcommand)]
@@ -85,6 +97,11 @@ async fn main() -> miette::Result<()> {
     match cli.command {
         Commands::Init { provider } => commands::init::run(&provider).await,
         Commands::Generate => commands::generate::run(&cli.schema).await,
+        Commands::Format {
+            check,
+            stdin,
+            paths,
+        } => commands::format::run(&cli.schema, paths, check, stdin).await,
         Commands::Migrate { command } => match command {
             MigrateCommands::Dev { name, snapshot } => {
                 commands::migrate::dev(&cli.schema, name.as_deref(), snapshot).await

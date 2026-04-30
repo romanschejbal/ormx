@@ -1,6 +1,6 @@
 [package]
-name = "ferriorm-cli"
-description = "CLI for ferriorm ORM - init, generate, migrate commands"
+name = "ferriorm-lsp"
+description = "Language server for ferriorm `.ferriorm` schema files"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,19 +11,17 @@ categories.workspace = true
 readme = "../../README.md"
 
 [[bin]]
-name = "ferriorm"
+name = "ferriorm-lsp"
 path = "src/main.rs"
 
 [dependencies]
 ferriorm-core.workspace = true
 ferriorm-parser.workspace = true
-ferriorm-codegen.workspace = true
 ferriorm-fmt.workspace = true
-ferriorm-runtime.workspace = true
-ferriorm-migrate = { workspace = true, features = ["postgres", "sqlite"] }
-clap.workspace = true
-sqlx = { workspace = true, features = ["postgres", "sqlite"] }
-tokio.workspace = true
+tower-lsp.workspace = true
+tokio = { workspace = true, features = ["io-std", "macros", "rt-multi-thread", "sync"] }
+dashmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-miette.workspace = true

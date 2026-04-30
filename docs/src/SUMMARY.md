@@ -41,5 +41,7 @@
 # Reference
 
 - [CLI Commands](./reference/cli.md)
+- [Formatting](./reference/formatting.md)
+- [Language Server](./reference/lsp.md)
 - [Database Support](./reference/database-support.md)
 - [Architecture](./reference/architecture.md)

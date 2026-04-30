@@ -36,8 +36,8 @@ pub fn validate(ast: &ast::SchemaFile) -> Result<Schema, CoreError> {
     let enums = validate_enums(ast)?;
     let models = validate_models(ast, &enums)?;
 
-    validate_unique_db_names(&models)?;
-    validate_relation_disambiguation(&models)?;
+    validate_unique_db_names(&models, ast)?;
+    validate_relation_disambiguation(&models, ast)?;
 
     Ok(Schema {
         datasource,
@@ -50,7 +50,7 @@ pub fn validate(ast: &ast::SchemaFile) -> Result<Schema, CoreError> {
 /// Two models cannot map to the same database table (`@@map("..."` /
 /// implicit snake_case-plural). Catching this here prevents conflicting
 /// CREATE TABLE statements at migration time.
-fn validate_unique_db_names(models: &[Model]) -> Result<(), CoreError> {
+fn validate_unique_db_names(models: &[Model], ast: &ast::SchemaFile) -> Result<(), CoreError> {
     use std::collections::HashMap;
     let mut seen: HashMap<&str, &str> = HashMap::new();
     for m in models {
@@ -61,6 +61,7 @@ fn validate_unique_db_names(models: &[Model]) -> Result<(), CoreError> {
                      Each model must map to a distinct table; use `@@map(\"...\")` to disambiguate.",
                     m.db_name, existing, m.name,
                 ),
+                span: model_span(ast, &m.name),
             });
         }
         seen.insert(&m.db_name, &m.name);
@@ -87,13 +88,31 @@ fn is_rust_keyword(s: &str) -> bool {
     )
 }
 
+/// Look up the AST `ModelDef` span by name. Used to attach source spans to
+/// validation errors that were detected from the post-validate IR.
+fn model_span(ast: &ast::SchemaFile, name: &str) -> Option<ast::Span> {
+    ast.models.iter().find(|m| m.name == name).map(|m| m.span)
+}
+
+/// Look up the AST `FieldDef` span by model + field name.
+fn field_span(ast: &ast::SchemaFile, model_name: &str, field_name: &str) -> Option<ast::Span> {
+    ast.models
+        .iter()
+        .find(|m| m.name == model_name)
+        .and_then(|m| m.fields.iter().find(|f| f.name == field_name))
+        .map(|f| f.span)
+}
+
 /// When two or more fields on the same model are *forward* FKs to the
 /// same target, OR two or more are *back-references* (implicit lists
 /// or `@relation` without `fields:`) from the same target, each must
 /// use `@relation("Name", ...)` to disambiguate. The forward and
 /// back-reference sides are tracked separately so a `parent` + `children`
 /// self-reference (one forward, one back) is unambiguous.
-fn validate_relation_disambiguation(models: &[Model]) -> Result<(), CoreError> {
+fn validate_relation_disambiguation(
+    models: &[Model],
+    ast: &ast::SchemaFile,
+) -> Result<(), CoreError> {
     use std::collections::{HashMap, HashSet};
 
     for model in models {
@@ -127,6 +146,7 @@ fn validate_relation_disambiguation(models: &[Model]) -> Result<(), CoreError> {
                              Add `@relation(\"<Name>\", ...)` to each related field on both sides.",
                             model.name, target,
                         ),
+                        span: field_span(ast, &model.name, &field.name),
                     });
                 };
                 if !seen_names.insert(n) {
@@ -136,6 +156,7 @@ fn validate_relation_disambiguation(models: &[Model]) -> Result<(), CoreError> {
                              Each relation between the same pair of models must have a unique name.",
                             n, model.name, target,
                         ),
+                        span: field_span(ast, &model.name, &field.name),
                     });
                 }
             }
@@ -147,6 +168,7 @@ fn validate_relation_disambiguation(models: &[Model]) -> Result<(), CoreError> {
 fn validate_datasource(ast: &ast::SchemaFile) -> Result<DatasourceConfig, CoreError> {
     let ds = ast.datasource.as_ref().ok_or(CoreError::Validation {
         message: "Missing datasource block".into(),
+        span: None,
     })?;
 
     let provider =
@@ -154,6 +176,7 @@ fn validate_datasource(ast: &ast::SchemaFile) -> Result<DatasourceConfig, CoreEr
             .parse::<DatabaseProvider>()
             .map_err(|_| CoreError::UnknownProvider {
                 provider: ds.provider.clone(),
+                span: Some(ds.span),
             })?;
 
     let url = match &ds.url {
@@ -189,6 +212,7 @@ fn validate_enums(ast: &ast::SchemaFile) -> Result<Vec<Enum>, CoreError> {
             return Err(CoreError::DuplicateName {
                 name: e.name.clone(),
                 kind: "enum",
+                span: Some(e.span),
             });
         }
 
@@ -214,6 +238,7 @@ fn validate_models(ast: &ast::SchemaFile, enums: &[Enum]) -> Result<Vec<Model>, 
             return Err(CoreError::DuplicateName {
                 name: model_def.name.clone(),
                 kind: "model",
+                span: Some(model_def.span),
             });
         }
 
@@ -222,6 +247,7 @@ fn validate_models(ast: &ast::SchemaFile, enums: &[Enum]) -> Result<Vec<Model>, 
             return Err(CoreError::DuplicateName {
                 name: model_def.name.clone(),
                 kind: "model/enum",
+                span: Some(model_def.span),
             });
         }
 
@@ -242,7 +268,7 @@ fn validate_model(
     let db_name = model_def
         .attributes
         .iter()
-        .find_map(|a| match a {
+        .find_map(|a| match &a.kind {
             ast::BlockAttribute::Map(name) => Some(name.clone()),
             _ => None,
         })
@@ -260,14 +286,16 @@ fn validate_model(
     }
 
     // Check @@id for composite primary key
-    let composite_id: Option<Vec<String>> = model_def.attributes.iter().find_map(|a| match a {
-        ast::BlockAttribute::Id(fields) => Some(fields.clone()),
-        _ => None,
-    });
+    let composite_id: Option<(Vec<String>, ast::Span)> =
+        model_def.attributes.iter().find_map(|a| match &a.kind {
+            ast::BlockAttribute::Id(fields) => Some((fields.clone(), a.span)),
+            _ => None,
+        });
 
     if !has_id_field && composite_id.is_none() {
         return Err(CoreError::MissingPrimaryKey {
             model_name: model_def.name.clone(),
+            span: Some(model_def.span),
         });
     }
 
@@ -281,7 +309,7 @@ fn validate_model(
             .find(|f| f.name == needle || f.db_name == needle || to_snake_case(&f.name) == needle)
     };
 
-    let primary_key = if let Some(composite_fields) = composite_id {
+    let primary_key = if let Some((composite_fields, attr_span)) = composite_id {
         // B4 (PK): all named fields must exist on the model.
         // B7: PK fields cannot be Json (uncomparable / unhashable in DBs).
         for f in &composite_fields {
@@ -291,6 +319,7 @@ fn validate_model(
                         "`@@id` on model `{}` references unknown field `{}`",
                         model_def.name, f,
                     ),
+                    span: Some(attr_span),
                 });
             };
             if matches!(resolved.field_type, FieldKind::Scalar(ScalarType::Json)) {
@@ -299,6 +328,7 @@ fn validate_model(
                         "Field `{}.{}` of type `Json` cannot be part of a composite primary key.",
                         model_def.name, resolved.name,
                     ),
+                    span: Some(attr_span),
                 });
             }
         }
@@ -318,7 +348,7 @@ fn validate_model(
     // must exist on the model; otherwise the migration would emit a
     // CREATE INDEX referencing a non-existent column.
     for attr in &model_def.attributes {
-        let (kind, fs) = match attr {
+        let (kind, fs) = match &attr.kind {
             ast::BlockAttribute::Index(idx) => ("@@index", &idx.fields),
             ast::BlockAttribute::Unique(idx) => ("@@unique", &idx.fields),
             _ => continue,
@@ -333,6 +363,7 @@ fn validate_model(
                         "`{}` on model `{}` references unknown field `{}`",
                         kind, model_def.name, f,
                     ),
+                    span: Some(attr.span),
                 });
             }
         }
@@ -342,7 +373,7 @@ fn validate_model(
     let indexes = model_def
         .attributes
         .iter()
-        .filter_map(|a| match a {
+        .filter_map(|a| match &a.kind {
             ast::BlockAttribute::Index(idx) => Some(Index {
                 fields: idx.fields.clone(),
                 name: idx.name.clone(),
@@ -355,7 +386,7 @@ fn validate_model(
     let unique_constraints = model_def
         .attributes
         .iter()
-        .filter_map(|a| match a {
+        .filter_map(|a| match &a.kind {
             ast::BlockAttribute::Unique(idx) => Some(UniqueConstraint {
                 fields: idx.fields.clone(),
                 name: idx.name.clone(),
@@ -393,6 +424,7 @@ fn validate_field(
                  Rename the field and use `@map(\"{}\")` if you need that database column name.",
                 model_name, field_def.name, field_def.name,
             ),
+            span: Some(field_def.span),
         });
     }
 
@@ -407,6 +439,7 @@ fn validate_field(
             model_name: model_name.to_string(),
             field_name: field_def.name.clone(),
             type_name: type_name.clone(),
+            span: Some(field_def.span),
         });
     };
 
@@ -434,6 +467,7 @@ fn validate_field(
                 "Field `{}.{}` is marked `@id` but is optional; primary key columns cannot be NULL.",
                 model_name, field_def.name,
             ),
+            span: Some(field_def.span),
         });
     }
 
@@ -450,6 +484,7 @@ fn validate_field(
                 message: format!(
                     "`@default(autoincrement())` requires an integer field, got `{type_name}`",
                 ),
+                span: Some(field_def.span),
             });
         }
     }
@@ -467,6 +502,7 @@ fn validate_field(
                     rel.fields.len(),
                     rel.references.len(),
                 ),
+                span: Some(field_def.span),
             });
         }
     }
@@ -602,6 +638,7 @@ model User {
         let ast = parse(source).expect("parse");
         let err = validate(&ast).unwrap_err();
         assert!(matches!(err, CoreError::MissingPrimaryKey { .. }));
+        assert!(err.span().is_some(), "missing-pk error should carry a span");
     }
 
     #[test]
@@ -621,6 +658,7 @@ model User {
         let ast = parse(source).expect("parse");
         let err = validate(&ast).unwrap_err();
         assert!(matches!(err, CoreError::UnknownType { .. }));
+        assert!(err.span().is_some());
     }
 
     #[test]

@@ -1,0 +1,22 @@
+datasource db {
+provider="postgresql"
+url= env("DATABASE_URL")
+}
+
+
+generator client {
+output =     "./src/generated"
+}
+
+enum Role { User Admin Moderator }
+
+model User {
+id String @id @default(uuid())
+email String @unique
+name String?
+role Role @default(User)
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+@@index([email])
+@@map("users")
+}
