@@ -527,3 +527,253 @@ async fn snapshot_can_insert_and_query_data_after_migration() {
         "Inserting duplicate email should fail due to UNIQUE constraint"
     );
 }
+
+// ─── F1-F5: SQL renderer string-level assertions ────────────────────
+//
+// These tests render `MigrationStep`s through the SQLite or Postgres
+// renderer and assert on the produced SQL strings. They need no live
+// database — they pin renderer contracts cheaply across both backends.
+
+#[test]
+fn f1_sqlite_inline_fk_with_mixed_cascade_actions() {
+    use ferriorm_core::ast::ReferentialAction;
+    use ferriorm_core::schema::*;
+    use ferriorm_core::types::{DatabaseProvider, ScalarType};
+    use ferriorm_core::utils::to_snake_case;
+    use ferriorm_migrate::diff;
+    use ferriorm_migrate::sql;
+
+    fn make_field(name: &str, scalar: ScalarType, is_id: bool) -> Field {
+        Field {
+            name: name.into(),
+            db_name: to_snake_case(name),
+            field_type: FieldKind::Scalar(scalar),
+            is_optional: false,
+            is_list: false,
+            is_id,
+            is_unique: false,
+            is_updated_at: false,
+            default: None,
+            relation: None,
+            db_type: None,
+        }
+    }
+    fn make_fk_field(
+        name: &str,
+        target: &str,
+        on_delete: ReferentialAction,
+    ) -> Field {
+        let mut f = make_field(name, ScalarType::String, false);
+        f.relation = Some(ResolvedRelation {
+            related_model: target.into(),
+            relation_type: RelationType::ManyToOne,
+            fields: vec![name.into()],
+            references: vec!["id".into()],
+            on_delete,
+            on_update: ReferentialAction::NoAction,
+        });
+        f
+    }
+    fn model(name: &str, db_name: &str, fields: Vec<Field>) -> Model {
+        let pk: Vec<String> = fields
+            .iter()
+            .filter(|f| f.is_id)
+            .map(|f| f.name.clone())
+            .collect();
+        Model {
+            name: name.into(),
+            db_name: db_name.into(),
+            fields,
+            primary_key: PrimaryKey { fields: pk },
+            indexes: vec![],
+            unique_constraints: vec![],
+        }
+    }
+
+    let user = model("User", "users", vec![make_field("id", ScalarType::String, true)]);
+    let cat = model("Cat", "cats", vec![make_field("id", ScalarType::String, true)]);
+    let post = model(
+        "Post",
+        "posts",
+        vec![
+            make_field("id", ScalarType::String, true),
+            make_fk_field("authorId", "User", ReferentialAction::Cascade),
+            make_fk_field("editorId", "User", ReferentialAction::SetNull),
+            make_fk_field("categoryId", "Cat", ReferentialAction::Restrict),
+        ],
+    );
+
+    let from = Schema {
+        datasource: DatasourceConfig {
+            name: "db".into(),
+            provider: DatabaseProvider::SQLite,
+            url: String::new(),
+        },
+        generators: vec![],
+        enums: vec![],
+        models: vec![],
+    };
+    let to = Schema {
+        datasource: from.datasource.clone(),
+        generators: vec![],
+        enums: vec![],
+        models: vec![user, cat, post],
+    };
+
+    let steps = diff::diff_schemas(&from, &to, DatabaseProvider::SQLite);
+    let sql = sql::renderer_for(DatabaseProvider::SQLite).render(&steps);
+
+    assert!(
+        sql.contains("ON DELETE CASCADE"),
+        "Cascade FK action must render. Got:\n{sql}"
+    );
+    assert!(
+        sql.contains("ON DELETE SET NULL"),
+        "SetNull FK action must render. Got:\n{sql}"
+    );
+    assert!(
+        sql.contains("ON DELETE RESTRICT"),
+        "Restrict FK action must render. Got:\n{sql}"
+    );
+}
+
+#[test]
+fn f2_postgres_drop_constraint_uses_if_exists() {
+    use ferriorm_core::types::DatabaseProvider;
+    use ferriorm_migrate::diff::MigrationStep;
+    use ferriorm_migrate::sql;
+
+    let steps = vec![
+        MigrationStep::DropForeignKey {
+            table: "posts".into(),
+            name: "fk_posts_users_author_id".into(),
+        },
+        MigrationStep::DropUniqueConstraint {
+            table: "users".into(),
+            name: "uq_users_email".into(),
+        },
+    ];
+    let sql = sql::renderer_for(DatabaseProvider::PostgreSQL).render(&steps);
+    assert!(
+        sql.contains("DROP CONSTRAINT IF EXISTS \"fk_posts_users_author_id\""),
+        "DROP FK must be IF EXISTS. Got:\n{sql}"
+    );
+    assert!(
+        sql.contains("DROP CONSTRAINT IF EXISTS \"uq_users_email\""),
+        "DROP UNIQUE must be IF EXISTS. Got:\n{sql}"
+    );
+}
+
+#[test]
+fn f3_postgres_alter_type_add_value_for_enum_extension() {
+    use ferriorm_core::types::DatabaseProvider;
+    use ferriorm_migrate::diff::MigrationStep;
+    use ferriorm_migrate::sql;
+
+    let step = MigrationStep::AddEnumVariant {
+        enum_name: "status".into(),
+        variant: "Suspended".into(),
+    };
+    let sql = sql::renderer_for(DatabaseProvider::PostgreSQL).render(&[step]);
+    assert!(
+        sql.contains("ALTER TYPE \"status\" ADD VALUE"),
+        "must use ALTER TYPE ADD VALUE for enum extension. Got:\n{sql}"
+    );
+    assert!(
+        sql.contains("'suspended'"),
+        "variant must be lowercased and quoted. Got:\n{sql}"
+    );
+}
+
+/// F4: changing `Int` -> `BigInt` on Postgres requires a `USING` cast in
+/// `ALTER COLUMN TYPE`, otherwise PG rejects the statement when data is
+/// present. **Expected to fail today** — the renderer emits no `USING`
+/// clause (`crates/ferriorm-migrate/src/sql/postgres.rs:159-164`).
+#[test]
+fn f4_postgres_alter_column_int_to_bigint_uses_cast() {
+    use ferriorm_core::types::DatabaseProvider;
+    use ferriorm_migrate::diff::{ColumnChanges, MigrationStep};
+    use ferriorm_migrate::sql;
+
+    let step = MigrationStep::AlterColumn {
+        table: "stats".into(),
+        column: "view_count".into(),
+        changes: ColumnChanges {
+            sql_type: Some("BIGINT".into()),
+            nullable: None,
+            default: None,
+        },
+    };
+    let sql = sql::renderer_for(DatabaseProvider::PostgreSQL).render(&[step]);
+    assert!(
+        sql.to_uppercase().contains("USING"),
+        "ALTER COLUMN TYPE must include `USING <col>::<type>` for safety on PG. \
+         Today the renderer omits it; PG rejects the statement on populated tables. \
+         Got:\n{sql}"
+    );
+}
+
+/// F5: renaming an enum via `@@map("new_name")` should produce
+/// `ALTER TYPE ... RENAME TO ...`, not DROP + CREATE (which destroys
+/// existing column values). Today there is no enum-rename detection in
+/// `diff_enums` — a rename is treated as drop+add. **Expected to fail
+/// today.**
+#[test]
+fn f5_enum_rename_via_at_map_postgres_uses_alter_rename() {
+    let v1 = r#"
+datasource db { provider = "postgresql" url = "postgresql://x" }
+enum Status {
+  Active
+  Inactive
+  @@map("status_old")
+}
+model A {
+  id     String @id
+  status Status
+  @@map("a")
+}
+"#;
+    let v2 = r#"
+datasource db { provider = "postgresql" url = "postgresql://x" }
+enum Status {
+  Active
+  Inactive
+  @@map("status_new")
+}
+model A {
+  id     String @id
+  status Status
+  @@map("a")
+}
+"#;
+
+    // Most of the parser's enum-related grammar may not even support `@@map`
+    // on enums today. If parsing v1 fails, document the limitation by
+    // failing the test with a clear message — that's the bug.
+    let s1 = match ferriorm_parser::parse_and_validate(v1) {
+        Ok(s) => s,
+        Err(e) => {
+            panic!(
+                "@@map on enum is not yet supported; renaming an enum requires this. Got: {e}"
+            );
+        }
+    };
+    let s2 = ferriorm_parser::parse_and_validate(v2).expect("parse v2");
+
+    let steps = ferriorm_migrate::diff::diff_schemas(
+        &s1,
+        &s2,
+        ferriorm_core::types::DatabaseProvider::PostgreSQL,
+    );
+    let sql = ferriorm_migrate::sql::renderer_for(
+        ferriorm_core::types::DatabaseProvider::PostgreSQL,
+    )
+    .render(&steps);
+
+    assert!(
+        sql.to_uppercase().contains("ALTER TYPE")
+            && sql.to_uppercase().contains("RENAME"),
+        "enum rename via @@map must use ALTER TYPE ... RENAME TO; today the diff treats \
+         it as drop+create which destroys data. Got:\n{sql}"
+    );
+}

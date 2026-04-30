@@ -523,3 +523,284 @@ async fn sqlite_chrono_now_inserted_via_app_roundtrips() {
         "App-inserted timestamp should roundtrip cleanly. Diff: {diff}ms"
     );
 }
+
+// ─── E1-E5: regression tests for recent CRUD bug fixes ─────────────
+//
+// These mirror the SQL the fixed codegen produces and verify it
+// behaves correctly end-to-end. They don't go through the generated
+// query builders (the e2e crate cannot import generated user code) —
+// instead they execute the same DDL/DML the codegen would emit.
+
+/// E1: regression for `734e18c`. Two inserts on an autoincrement PK
+/// table that omit the `id` column entirely (the fixed-codegen path
+/// when caller passes `id: None`) must produce two distinct,
+/// monotonically increasing ids.
+#[tokio::test]
+async fn e1_autoincrement_create_with_id_none() {
+    use sqlx::SqlitePool;
+
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        r#"CREATE TABLE "drafts" (
+            "id" INTEGER PRIMARY KEY,
+            "title" TEXT NOT NULL
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for title in ["one", "two", "three"] {
+        sqlx::query(r#"INSERT INTO "drafts" ("title") VALUES (?)"#)
+            .bind(title)
+            .execute(&pool)
+            .await
+            .expect("insert with id omitted must auto-assign");
+    }
+
+    let ids: Vec<i64> = sqlx::query_scalar(r#"SELECT "id" FROM "drafts" ORDER BY "id""#)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), 3);
+    let mut sorted = ids.clone();
+    sorted.dedup();
+    assert_eq!(sorted, ids, "ids must be distinct");
+}
+
+/// E2: same autoincrement-with-None shape, but via INSERT ... ON
+/// CONFLICT DO UPDATE (upsert). The id column is still omitted from
+/// the INSERT side, but the upsert variant has separate codegen, so
+/// the regression must be guarded independently.
+#[tokio::test]
+async fn e2_autoincrement_upsert_with_id_none() {
+    use sqlx::SqlitePool;
+
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        r#"CREATE TABLE "users" (
+            "id" INTEGER PRIMARY KEY,
+            "email" TEXT NOT NULL UNIQUE,
+            "name" TEXT NOT NULL
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // First call inserts; id is auto-assigned.
+    let row: (i64,) = sqlx::query_as(
+        r#"INSERT INTO "users" ("email", "name") VALUES (?, ?)
+           ON CONFLICT("email") DO UPDATE SET "name" = excluded."name"
+           RETURNING "id""#,
+    )
+    .bind("alice@x.com")
+    .bind("Alice")
+    .fetch_one(&pool)
+    .await
+    .expect("upsert insert path");
+    let first_id = row.0;
+    assert!(first_id > 0);
+
+    // Second call updates the existing row — must not create a new one.
+    let row: (i64,) = sqlx::query_as(
+        r#"INSERT INTO "users" ("email", "name") VALUES (?, ?)
+           ON CONFLICT("email") DO UPDATE SET "name" = excluded."name"
+           RETURNING "id""#,
+    )
+    .bind("alice@x.com")
+    .bind("Alicia")
+    .fetch_one(&pool)
+    .await
+    .expect("upsert update path");
+    assert_eq!(row.0, first_id, "upsert update must hit the same id");
+
+    let count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM "users""#)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "upsert must not insert a duplicate row");
+}
+
+/// E3: INSERT OR IGNORE with autoincrement and a unique conflict.
+/// Regression for `219b2f0`. Conflicting row must be silently ignored;
+/// id sequence must not advance on the rejected insert (or, if SQLite
+/// does advance internally, the test still passes because we only
+/// assert on observable rows).
+#[tokio::test]
+async fn e3_on_conflict_ignore_with_id_none() {
+    use sqlx::SqlitePool;
+
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        r#"CREATE TABLE "tags" (
+            "id" INTEGER PRIMARY KEY,
+            "slug" TEXT NOT NULL UNIQUE
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(r#"INSERT OR IGNORE INTO "tags" ("slug") VALUES (?)"#)
+        .bind("rust")
+        .execute(&pool)
+        .await
+        .expect("first insert");
+
+    // Conflicting insert — IGNORE silently no-ops.
+    let result = sqlx::query(r#"INSERT OR IGNORE INTO "tags" ("slug") VALUES (?)"#)
+        .bind("rust")
+        .execute(&pool)
+        .await
+        .expect("INSERT OR IGNORE must not error on conflict");
+    assert_eq!(result.rows_affected(), 0, "conflicting insert must be ignored");
+
+    let count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM "tags""#)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "only one row exists after conflict-ignore");
+}
+
+/// E4: regression for `219b2f0`. Upserting on a compound `@@unique([a,
+/// b])` constraint must hit the existing row when both columns match,
+/// and insert a new row when only one matches.
+#[tokio::test]
+async fn e4_compound_unique_upsert_targeting() {
+    use sqlx::SqlitePool;
+
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        r#"CREATE TABLE "subs" (
+            "id" INTEGER PRIMARY KEY,
+            "user_id" INTEGER NOT NULL,
+            "channel" TEXT NOT NULL,
+            "status" TEXT NOT NULL,
+            UNIQUE ("user_id", "channel")
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // (1, "email") -- inserted
+    sqlx::query(
+        r#"INSERT INTO "subs" ("user_id", "channel", "status") VALUES (?, ?, ?)
+           ON CONFLICT ("user_id", "channel") DO UPDATE SET "status" = excluded."status""#,
+    )
+    .bind(1i64)
+    .bind("email")
+    .bind("active")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // (1, "email") again — must update, not insert.
+    sqlx::query(
+        r#"INSERT INTO "subs" ("user_id", "channel", "status") VALUES (?, ?, ?)
+           ON CONFLICT ("user_id", "channel") DO UPDATE SET "status" = excluded."status""#,
+    )
+    .bind(1i64)
+    .bind("email")
+    .bind("paused")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // (1, "sms") — different channel, must insert.
+    sqlx::query(
+        r#"INSERT INTO "subs" ("user_id", "channel", "status") VALUES (?, ?, ?)
+           ON CONFLICT ("user_id", "channel") DO UPDATE SET "status" = excluded."status""#,
+    )
+    .bind(1i64)
+    .bind("sms")
+    .bind("active")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM "subs""#)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(total, 2, "two distinct (user_id, channel) pairs must exist");
+
+    let email_status: String = sqlx::query_scalar(
+        r#"SELECT "status" FROM "subs" WHERE "user_id" = 1 AND "channel" = 'email'"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(email_status, "paused", "email row was updated by the second upsert");
+}
+
+/// E5: regression for `705a0ab`. A parent with optional FK children:
+/// some children have `parent_id = NULL`. The relation loader's
+/// `filter_map` over child FKs must not panic and must skip the NULL
+/// rows when collecting parent ids.
+#[tokio::test]
+async fn e5_optional_fk_one_to_many_loads_filter_map() {
+    use sqlx::SqlitePool;
+
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+    sqlx::query(r#"CREATE TABLE "parents" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL)"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"CREATE TABLE "children" (
+            "id" INTEGER PRIMARY KEY,
+            "parent_id" INTEGER,
+            "name" TEXT NOT NULL,
+            FOREIGN KEY ("parent_id") REFERENCES "parents"("id")
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(r#"INSERT INTO "parents" ("id", "name") VALUES (1, 'P1'), (2, 'P2')"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"INSERT INTO "children" ("id", "parent_id", "name") VALUES
+           (10, 1, 'A'),
+           (11, NULL, 'orphan'),
+           (12, 2, 'B'),
+           (13, NULL, 'orphan2')"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The codegen relation loader collects non-NULL parent_ids via
+    // filter_map and re-fetches parents. Mirror that pattern here.
+    #[derive(sqlx::FromRow)]
+    struct ChildRow {
+        parent_id: Option<i64>,
+    }
+
+    let children: Vec<ChildRow> = sqlx::query_as(r#"SELECT "parent_id" FROM "children""#)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    let parent_ids: Vec<i64> = children.iter().filter_map(|c| c.parent_id).collect();
+    assert_eq!(parent_ids.len(), 2, "two children have non-NULL FK");
+    assert!(parent_ids.contains(&1));
+    assert!(parent_ids.contains(&2));
+
+    // And the filter_map output round-trips through an IN-list query
+    // without including NULL — that's what the relation loader does.
+    let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(r#"SELECT "id" FROM "parents" WHERE "id" IN ("#);
+    let mut sep = qb.separated(", ");
+    for id in &parent_ids {
+        sep.push_bind(*id);
+    }
+    qb.push(")");
+    let rows: Vec<i64> = qb.build_query_scalar().fetch_all(&pool).await.unwrap();
+    assert_eq!(rows.len(), 2);
+}

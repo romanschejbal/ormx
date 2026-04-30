@@ -328,3 +328,140 @@ async fn shadow_can_insert_data_after_multi_migration() {
     assert_eq!(row.2, 999);
     assert_eq!(row.3, "Electronics");
 }
+
+// ─── G1-G3: shadow DB and ordering ──────────────────────────────────
+
+/// G1: when an existing migration's SQL is malformed, the shadow DB
+/// flow must surface an error (not panic, not silently succeed). The
+/// shadow database file itself is created in the system temp dir, so
+/// we can't easily probe leakage; the tractable assertion is that the
+/// returned error mentions the failure and that subsequent
+/// `create_migration` calls don't deadlock.
+#[tokio::test]
+async fn g1_shadow_surfaces_syntax_error_in_existing_migration() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let migrations_dir = tmp.path().join("migrations");
+    std::fs::create_dir_all(&migrations_dir).unwrap();
+
+    // Hand-craft a migration with deliberately broken SQL.
+    let bad_dir = migrations_dir.join("0001_bad");
+    std::fs::create_dir_all(&bad_dir).unwrap();
+    std::fs::write(
+        bad_dir.join("migration.sql"),
+        "CREATE TABL invalid syntax here;",
+    )
+    .unwrap();
+    // Snapshot must exist for the runner to consider the migration valid.
+    std::fs::write(bad_dir.join("_schema_snapshot.json"), "{}").unwrap();
+
+    let runner = MigrationRunner::new(
+        migrations_dir.clone(),
+        ferriorm_core::types::DatabaseProvider::SQLite,
+        MigrationStrategy::ShadowDatabase,
+    );
+
+    let schema = ferriorm_parser::parse_and_validate(SCHEMA_V2).expect("parse v2");
+    let result = runner.create_migration(&schema, "follow_up", None).await;
+
+    assert!(
+        result.is_err(),
+        "create_migration with a malformed prior migration must return an error; got Ok"
+    );
+}
+
+/// G2: pin the migration-ordering behavior. The runner zero-pads new
+/// migrations to 4 digits, so ordering is stable up to 9999. But if a
+/// user *manually* creates migrations without zero padding (`2_x`,
+/// `10_y`), string sort places `10_y` before `2_x` — semantic
+/// inversion. This test documents the current behavior so users (and
+/// future contributors) know the contract.
+#[tokio::test]
+async fn g2_handcrafted_numeric_prefix_sort_is_stringy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let migrations_dir = tmp.path().join("migrations");
+    std::fs::create_dir_all(&migrations_dir).unwrap();
+
+    // Hand-create two migrations with non-zero-padded numeric prefixes.
+    for (dir, sql) in [
+        (
+            "2_create_a",
+            r#"CREATE TABLE "a" ("id" INTEGER PRIMARY KEY);"#,
+        ),
+        (
+            "10_create_b",
+            r#"CREATE TABLE "b" ("id" INTEGER PRIMARY KEY);"#,
+        ),
+    ] {
+        let d = migrations_dir.join(dir);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("migration.sql"), sql).unwrap();
+        std::fs::write(d.join("_schema_snapshot.json"), "{}").unwrap();
+    }
+
+    let runner = MigrationRunner::new(
+        migrations_dir.clone(),
+        ferriorm_core::types::DatabaseProvider::SQLite,
+        MigrationStrategy::ShadowDatabase,
+    );
+
+    let pool = sqlite_memory_pool().await;
+    let applied = runner
+        .apply_pending_sqlite(&pool)
+        .await
+        .expect("apply pending");
+
+    // Document: under string sort, "10_create_b" comes BEFORE "2_create_a".
+    // If a future change adopts numeric-aware sort, this assertion will
+    // flip and the test should be updated to expect the new contract.
+    assert_eq!(
+        applied,
+        vec!["10_create_b".to_string(), "2_create_a".to_string()],
+        "current contract: migration filenames are sorted lexicographically. \
+         Users must zero-pad numeric prefixes (the runner does this for \
+         auto-generated migrations) or risk semantic inversion."
+    );
+}
+
+/// G3: changing a field's `db_name` via `@map` is currently treated as
+/// drop+add by the diff engine, which destroys data. This test pins
+/// the current behavior so that any future rename-detection feature
+/// has a clear regression target.
+#[tokio::test]
+async fn g3_shadow_field_rename_via_at_map_drops_and_adds() {
+    let v1 = r#"
+datasource db { provider = "sqlite" url = "sqlite::memory:" }
+model U {
+  id    String @id @default(uuid())
+  email String
+  @@map("u")
+}
+"#;
+    let v2 = r#"
+datasource db { provider = "sqlite" url = "sqlite::memory:" }
+model U {
+  id    String @id @default(uuid())
+  email String @map("email_address")
+  @@map("u")
+}
+"#;
+    let s1 = ferriorm_parser::parse_and_validate(v1).expect("v1");
+    let s2 = ferriorm_parser::parse_and_validate(v2).expect("v2");
+    let steps = ferriorm_migrate::diff::diff_schemas(
+        &s1,
+        &s2,
+        ferriorm_core::types::DatabaseProvider::SQLite,
+    );
+
+    use ferriorm_migrate::diff::MigrationStep;
+    let has_drop = steps
+        .iter()
+        .any(|s| matches!(s, MigrationStep::DropColumn { column, .. } if column == "email"));
+    let has_add = steps
+        .iter()
+        .any(|s| matches!(s, MigrationStep::AddColumn { column, .. } if column.name == "email_address"));
+
+    assert!(has_drop, "current behavior: drop the old column. Steps: {steps:?}");
+    assert!(has_add, "current behavior: add the new column. Steps: {steps:?}");
+    // If a rename-detection feature lands, this test must be updated:
+    // it should expect a single rename-style step that preserves data.
+}
