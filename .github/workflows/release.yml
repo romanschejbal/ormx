@@ -1,0 +1,119 @@
+# Release ferriorm to crates.io.
+#
+# Trigger: manual `workflow_dispatch` from the Actions tab. Provide the new
+# semver version (e.g. `0.2.2`) and the workflow will:
+#   1. Run fmt + clippy + tests against main.
+#   2. Bump [workspace.package].version and the five internal path+version
+#      deps in the root Cargo.toml (via scripts/bump-version.py).
+#   3. Refresh Cargo.lock and re-run tests.
+#   4. Commit `v<version>: release` and tag `v<version>`.
+#   5. Publish all six crates to crates.io in dependency order with a
+#      propagation sleep between each.
+#   6. Push the commit + tag to origin/main.
+#
+# One-time setup before the first run:
+#   - Create a crates.io API token with publish scope and add it as a repo
+#     secret named `CARGO_REGISTRY_TOKEN` (Settings → Secrets and variables
+#     → Actions).
+#   - If main has branch protection that requires PRs, allow
+#     `github-actions[bot]` to bypass it so the final push succeeds.
+#
+# `scripts/publish.sh` is retained as an emergency local fallback.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version (semver, e.g. 0.2.2)"
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  PROPAGATION_SLEEP_SECS: "20"
+
+jobs:
+  release:
+    name: Release v${{ inputs.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Validate version input
+        run: |
+          if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "::error::'${{ inputs.version }}' is not a valid semver version"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Pre-bump fmt + clippy + tests
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+          cargo test --workspace
+
+      - name: Bump workspace version
+        run: python3 scripts/bump-version.py "${{ inputs.version }}"
+
+      - name: Refresh Cargo.lock
+        run: cargo update -w
+
+      - name: Post-bump tests
+        run: cargo test --workspace
+
+      - name: Commit + tag release
+        run: |
+          git add Cargo.toml Cargo.lock
+          git commit -m "v${{ inputs.version }}: release"
+          git tag "v${{ inputs.version }}"
+
+      - name: Publish crates to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          crates=(
+            ferriorm-core
+            ferriorm-parser
+            ferriorm-runtime
+            ferriorm-codegen
+            ferriorm-migrate
+            ferriorm-cli
+          )
+          for i in "${!crates[@]}"; do
+            crate="${crates[$i]}"
+            echo "::group::[$((i+1))/${#crates[@]}] cargo publish $crate"
+            (cd "crates/$crate" && cargo publish)
+            echo "::endgroup::"
+            if [[ $((i+1)) -lt ${#crates[@]} ]]; then
+              echo "sleeping ${PROPAGATION_SLEEP_SECS}s for crates.io index to catch up"
+              sleep "$PROPAGATION_SLEEP_SECS"
+            fi
+          done
+
+      - name: Push commit + tag
+        run: |
+          git push origin main
+          git push origin "v${{ inputs.version }}"
