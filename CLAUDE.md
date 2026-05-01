@@ -22,6 +22,10 @@ cargo run -p ferriorm-cli -- --schema path/to/schema.ferriorm migrate status    
 cargo run -p ferriorm-cli -- --schema path/to/schema.ferriorm db pull             # Introspect DB into schema
 ```
 
+## Releasing
+
+Releases are cut from the `Release` workflow in GitHub Actions: trigger it manually with the new semver `version` input and CI bumps `Cargo.toml` (via `scripts/bump-version.py`), runs the full lint + test suite, commits + tags `v<version>`, publishes the six crates to crates.io in dependency order, and pushes the commit + tag back to `main`. Requires the repo secret `CARGO_REGISTRY_TOKEN`. `scripts/publish.sh` is retained as an emergency local fallback and uses the same bump script.
+
 ## Key patterns
 
 - All dependencies are defined at workspace level in root `Cargo.toml`

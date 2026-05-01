@@ -154,44 +154,7 @@ cargo test --workspace --quiet
 
 # ─── 3. Bump version in Cargo.toml ───────────────────────────────
 say "bumping version in workspace Cargo.toml"
-
-# Use a pinned `workspace.package.version` match so we don't touch the
-# example's `version = "0.1.0"` line or anything else.
-#
-# Two edits:
-#  (a) [workspace.package] version = "<cur>"  → "<new>"
-#  (b) workspace.dependencies internal crates version = "<cur>"  → "<new>"
-#      (there are five of them, matching the ferriorm-* crates)
-python3 - <<PY
-import re, sys, pathlib
-path = pathlib.Path("Cargo.toml")
-text = path.read_text()
-
-cur = "${CUR_VERSION}"
-new = "${NEW_VERSION}"
-
-# (a) [workspace.package] version — match only under that section.
-pattern_pkg = re.compile(
-    r'(\[workspace\.package\][^\[]*?version = ")' + re.escape(cur) + r'(")',
-    re.DOTALL,
-)
-text, n_pkg = pattern_pkg.subn(r'\g<1>' + new + r'\g<2>', text, count=1)
-if n_pkg != 1:
-    sys.exit("failed to bump workspace.package.version")
-
-# (b) internal path+version deps: ferriorm-<name> = { path = "...", version = "<cur>" }
-pattern_dep = re.compile(
-    r'(ferriorm-[a-z]+ = \{ path = "crates/ferriorm-[a-z]+", version = ")'
-    + re.escape(cur)
-    + r'(")'
-)
-text, n_dep = pattern_dep.subn(r'\g<1>' + new + r'\g<2>', text)
-if n_dep != 5:
-    sys.exit(f"expected 5 internal dep version bumps, got {n_dep}")
-
-path.write_text(text)
-print(f"bumped workspace.package.version and {n_dep} internal deps")
-PY
+python3 scripts/bump-version.py "$NEW_VERSION"
 
 # ─── 4. Refresh lockfile + re-run tests ─────────────────────────
 say "cargo update -w"
